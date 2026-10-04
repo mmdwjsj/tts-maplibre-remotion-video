@@ -1,0 +1,859 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>泰国府级排名音视频生成器</title>
+  <style>
+    :root {
+      font-family: Inter, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #e8f5f3;
+      background: #071218;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% 0, #12333a, #071218 52%);
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      padding: 26px 34px;
+      border-bottom: 1px solid #21434a;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 23px;
+      letter-spacing: 2px;
+    }
+
+    header span {
+      color: #6ee7d8;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr 0.85fr;
+      gap: 18px;
+      max-width: 1500px;
+      margin: auto;
+      padding: 24px;
+    }
+
+    .card {
+      padding: 18px;
+      background: #0c2027;
+      border: 1px solid #21434a;
+      border-radius: 14px;
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      color: #8eece0;
+      font-size: 15px;
+    }
+
+    .toolbar,
+    .downloads {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    button,
+    .file-label,
+    .download {
+      padding: 9px 12px;
+      color: #dffefa;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      background: #12383d;
+      border: 1px solid #34716e;
+      border-radius: 8px;
+    }
+
+    button.primary {
+      width: 100%;
+      padding: 14px;
+      color: #041311;
+      font-size: 15px;
+      background: #2bc7b1;
+      border: 0;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 9px;
+      color: #e8f5f3;
+      font: inherit;
+      background: #07161b;
+      border: 1px solid #2a5156;
+      border-radius: 7px;
+    }
+
+    textarea {
+      min-height: 105px;
+      resize: vertical;
+    }
+
+    .field {
+      margin: 10px 0;
+    }
+
+    .field label {
+      display: block;
+      margin-bottom: 5px;
+      color: #94afb0;
+      font-size: 12px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 10px;
+    }
+
+    .table-wrap {
+      max-height: 480px;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      font-size: 12px;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 7px 5px;
+      text-align: left;
+      white-space: nowrap;
+      border-bottom: 1px solid #1c3940;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      color: #8fb8b7;
+      background: #0c2027;
+    }
+
+    td input {
+      min-width: 70px;
+      padding: 6px;
+    }
+
+    .remove {
+      padding: 5px 8px;
+      color: #ff9e9e;
+      background: transparent;
+    }
+
+    .preview {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 430px;
+      background: radial-gradient(circle, #123a3b, #09191f 65%);
+      border: 1px dashed #2a5b60;
+      border-radius: 10px;
+    }
+
+    .map {
+      width: 65%;
+      height: 75%;
+      filter: drop-shadow(0 0 14px #3be2c4);
+    }
+
+    .map path {
+      fill: #2a8a7d;
+      stroke: #a2fff0;
+      stroke-width: 1.2;
+    }
+
+    .preview-title {
+      position: absolute;
+      top: 25px;
+      right: 20px;
+      left: 20px;
+      font-size: 21px;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .preview-note {
+      position: absolute;
+      bottom: 14px;
+      color: #7ca5a4;
+      font-size: 12px;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    .bar {
+      height: 8px;
+      margin-top: 15px;
+      overflow: hidden;
+      background: #17343a;
+      border-radius: 99px;
+    }
+
+    .bar i {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: #2bc7b1;
+      transition: width 0.35s;
+    }
+
+    .status,
+    .hint,
+    .result-meta {
+      margin-top: 8px;
+      color: #8faeac;
+      font-size: 12px;
+    }
+
+    .result {
+      display: none;
+      margin-top: 18px;
+      padding-top: 14px;
+      border-top: 1px solid #21434a;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .action-row .primary {
+      flex: 1;
+      width: auto;
+    }
+
+    .action-row .downloads {
+      flex-wrap: nowrap;
+      margin: 0;
+    }
+
+    @media (max-width: 1050px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .wide {
+        grid-column: auto;
+      }
+
+      .field-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 800px) {
+      .action-row .downloads {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>泰国府级排名音视频生成器</h1>
+    <span>WAV · Timeline · MP4</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1 / 排名数据</h2>
+
+      <div class="toolbar">
+        <button id="add" type="button">添加一行</button>
+
+        <label class="file-label">
+          导入 JSON
+          <input
+            id="jsonFile"
+            class="hidden"
+            type="file"
+            accept=".json,application/json"
+          />
+        </label>
+
+        <button id="sample" type="button">加载示例</button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>府 ID</th>
+              <th>英文名</th>
+              <th>泰文名</th>
+              <th>数值</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2 / 视频预览</h2>
+
+      <div class="preview">
+        <div id="previewTitle" class="preview-title">
+          THAILAND PROVINCE RANKING
+        </div>
+
+        <svg
+          class="map"
+          viewBox="0 0 300 480"
+          role="img"
+          aria-label="泰国地图示意图"
+        >
+          <path
+            d="M115 12 170 30 183 74 166 105 192 145 173 190 194 234 170 275 181 316 150 363 145 423 112 468 92 418 101 365 78 320 94 273 75 226 103 182 84 137 99 96 86 53Z"
+          />
+        </svg>
+
+        <div class="preview-note">排名府将在视频中依次高亮</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3 / 视频与 TTS 设置</h2>
+
+      <div class="field">
+        <label for="title">视频标题</label>
+        <input id="title" value="THAILAND PROVINCE RANKING" />
+      </div>
+
+      <div class="field">
+        <label for="outputName">输出文件名</label>
+        <input id="outputName" value="thailand-province-ranking" />
+      </div>
+
+      <div class="field">
+        <label for="opening">开场白</label>
+        <textarea id="opening">欢迎观看泰国府级数据排名。</textarea>
+      </div>
+
+      <div class="field">
+        <label for="ttsEngine">TTS 引擎</label>
+        <select id="ttsEngine" style="margin-bottom: 10px">
+          <option value="">正在检测 TTS 引擎…</option>
+        </select>
+
+        <label for="speaker">解说语音</label>
+        <select id="speaker">
+          <option value="">正在读取可用语音…</option>
+        </select>
+      </div>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="gap">各排名解说间隔（秒）</label>
+          <input
+            id="gap"
+            type="number"
+            min="0"
+            max="10"
+            step="0.1"
+            value="0.5"
+          />
+        </div>
+
+        <div class="field">
+          <label for="resolution">画幅</label>
+          <select id="resolution">
+            <option value="1080x1920">1080 × 1920（竖屏）</option>
+            <option value="1920x1080">1920 × 1080（横屏）</option>
+            <option value="1080x1080">1080 × 1080（方形）</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="fps">帧率</label>
+          <select id="fps">
+            <option value="30">30</option>
+            <option value="60">60</option>
+            <option value="90">90</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="ttsSpeed">解说语速（1.0 为正常速度）</label>
+          <input
+            id="ttsSpeed"
+            type="number"
+            min="0.25"
+            max="4"
+            step="0.05"
+            value="1.0"
+          />
+        </div>
+      </div>
+
+      <p class="hint">
+        WAV 的真实时长决定视频时长和 Timeline，目标时长无需手动设置。
+      </p>
+    </section>
+
+    <section class="card wide">
+      <h2>4 / 将要生成的完整音频文案</h2>
+
+      <textarea id="script" rows="10"></textarea>
+
+      <div class="toolbar" style="margin-top: 10px">
+        <button id="refreshScript" type="button">
+          根据开场白和排名重新生成文案
+        </button>
+      </div>
+
+      <p class="hint">可直接编辑；重新生成会覆盖当前文本。</p>
+    </section>
+
+    <section class="card wide">
+      <div class="action-row">
+        <button id="generate" class="primary" type="button">
+          生成音频与视频
+        </button>
+
+        <div id="downloads" class="downloads" style="display: none">
+          <a id="wavDownload" class="download">下载音频 WAV</a>
+          <a id="timelineDownload" class="download">下载 Timeline</a>
+          <a id="mp4Download" class="download">下载 MP4 视频</a>
+        </div>
+      </div>
+
+      <div class="bar">
+        <i id="bar"></i>
+      </div>
+
+      <div id="status" class="status">等待录入数据</div>
+
+      <div id="result" class="result">
+        <strong>生成完成 ✓</strong>
+        <div id="resultMeta" class="result-meta"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const sample = [
+      {
+        rank: 1,
+        provinceId: "TH-10",
+        provinceEn: "Bangkok",
+        provinceTh: "กรุงเทพมหานคร",
+        value: 12500,
+      },
+      {
+        rank: 2,
+        provinceId: "TH-50",
+        provinceEn: "Chiang Mai",
+        provinceTh: "เชียงใหม่",
+        value: 9800,
+      },
+      {
+        rank: 3,
+        provinceId: "TH-20",
+        provinceEn: "Chon Buri",
+        provinceTh: "ชลบุรี",
+        value: 8600,
+      },
+    ];
+
+    let data = sample.map((item) => ({ ...item }));
+
+    const $ = (selector) => document.querySelector(selector);
+    const rows = $("#rows");
+
+    const escapeHtml = (value) =>
+      String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+    const safeName = (value) =>
+      value
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, "-")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^[-.]+|[-.]+$/g, "")
+        .slice(0, 100) || "thailand-ranking";
+
+    const narration = (ranking) =>
+      `อันดับ ${ranking.rank} ${
+        ranking.provinceTh || ranking.provinceEn
+      } (${ranking.provinceEn}) มีค่า ${Number(
+        ranking.value,
+      ).toLocaleString()}`;
+
+    const buildScript = () =>
+      [
+        $("#opening").value.trim(),
+        ...data
+          .slice()
+          .sort((a, b) => Number(a.rank) - Number(b.rank))
+          .map(narration),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+    const refreshScript = () => {
+      $("#script").value = buildScript();
+    };
+
+    function render() {
+      rows.innerHTML = "";
+
+      data.forEach((ranking, index) => {
+        const tr = document.createElement("tr");
+
+        ["rank", "provinceId", "provinceEn", "provinceTh", "value"].forEach(
+          (key) => {
+            const td = document.createElement("td");
+            const input = document.createElement("input");
+
+            input.value = ranking[key] ?? "";
+
+            if (key === "rank" || key === "value") {
+              input.type = "number";
+            }
+
+            input.addEventListener("input", (event) => {
+              ranking[key] =
+                key === "rank" || key === "value"
+                  ? Number(event.target.value)
+                  : event.target.value;
+
+              refreshScript();
+            });
+
+            td.append(input);
+            tr.append(td);
+          },
+        );
+
+        const actionCell = document.createElement("td");
+        const removeButton = document.createElement("button");
+
+        removeButton.type = "button";
+        removeButton.className = "remove";
+        removeButton.textContent = "删除";
+
+        removeButton.addEventListener("click", () => {
+          data.splice(index, 1);
+          render();
+          refreshScript();
+        });
+
+        actionCell.append(removeButton);
+        tr.append(actionCell);
+        rows.append(tr);
+      });
+    }
+
+    function setStatus(text, progress) {
+      $("#status").textContent = text;
+      $("#bar").style.width = `${progress}%`;
+    }
+
+    async function readJson(response) {
+      const contentType = response.headers.get("content-type") || "";
+
+      if (!contentType.includes("application/json")) {
+        const text = await response.text();
+        throw new Error(
+          text
+            ? `服务器返回了非 JSON 内容：${text.slice(0, 120)}`
+            : "服务器返回了空响应",
+        );
+      }
+
+      return response.json();
+    }
+
+    async function loadEngineVoices() {
+      const engine = $("#ttsEngine").value;
+
+      if (!engine) {
+        $("#speaker").innerHTML =
+          '<option value="">没有可用的 TTS 引擎</option>';
+        return;
+      }
+
+      $("#speaker").innerHTML =
+        '<option value="">正在读取语音…</option>';
+
+      try {
+        const response = await fetch(
+          `/api/tts/engines/${encodeURIComponent(engine)}/voices`,
+        );
+        const voices = await readJson(response);
+
+        if (!response.ok) {
+          throw new Error(voices.error || "语音列表读取失败");
+        }
+
+        $("#speaker").innerHTML =
+          Array.isArray(voices) && voices.length
+            ? voices
+                .map(
+                  (voice) =>
+                    `<option value="${escapeHtml(voice.id)}">${escapeHtml(
+                      voice.name,
+                    )} (${escapeHtml(voice.culture || "default")})</option>`,
+                )
+                .join("")
+            : '<option value="">使用引擎默认语音</option>';
+      } catch (error) {
+        $("#speaker").innerHTML =
+          `<option value="">${escapeHtml(error.message)}</option>`;
+      }
+    }
+
+    async function loadEngineCatalog() {
+      try {
+        const response = await fetch("/api/tts/engines");
+        const engines = await readJson(response);
+
+        if (!response.ok) {
+          throw new Error(engines.error || "TTS 引擎读取失败");
+        }
+
+        if (!Array.isArray(engines) || engines.length === 0) {
+          $("#ttsEngine").innerHTML =
+            '<option value="">未发现 TTS 引擎</option>';
+          $("#speaker").innerHTML =
+            '<option value="">没有可用语音</option>';
+          return;
+        }
+
+        $("#ttsEngine").innerHTML = engines
+          .map((engine) => {
+            const disabled = engine.available ? "" : "disabled";
+            const unavailable = engine.available
+              ? ""
+              : `（不可用：${engine.reason || "未启用"}）`;
+
+            return `<option value="${escapeHtml(
+              engine.id,
+            )}" ${disabled}>${escapeHtml(engine.name)}${escapeHtml(
+              unavailable,
+            )}</option>`;
+          })
+          .join("");
+
+        const firstAvailable = engines.find((engine) => engine.available);
+
+        if (firstAvailable) {
+          $("#ttsEngine").value = firstAvailable.id;
+          await loadEngineVoices();
+        } else {
+          $("#speaker").innerHTML =
+            '<option value="">没有可用的 TTS 引擎</option>';
+        }
+      } catch (error) {
+        $("#ttsEngine").innerHTML =
+          `<option value="">${escapeHtml(error.message)}</option>`;
+        $("#speaker").innerHTML =
+          '<option value="">语音读取失败</option>';
+      }
+    }
+
+    $("#ttsEngine").addEventListener("change", loadEngineVoices);
+
+    $("#title").addEventListener("input", (event) => {
+      $("#previewTitle").textContent = event.target.value;
+    });
+
+    $("#outputName").addEventListener("blur", (event) => {
+      event.target.value = safeName(event.target.value);
+    });
+
+    $("#opening").addEventListener("input", refreshScript);
+    $("#refreshScript").addEventListener("click", refreshScript);
+
+    $("#add").addEventListener("click", () => {
+      data.push({
+        rank: data.length + 1,
+        provinceId: "TH-",
+        provinceEn: "Province",
+        provinceTh: "",
+        value: 0,
+      });
+
+      render();
+      refreshScript();
+    });
+
+    $("#sample").addEventListener("click", () => {
+      data = sample.map((item) => ({ ...item }));
+      render();
+      refreshScript();
+      setStatus("已加载示例数据", 0);
+    });
+
+    $("#jsonFile").addEventListener("change", async (event) => {
+      try {
+        const file = event.target.files?.[0];
+
+        if (!file) {
+          return;
+        }
+
+        const parsed = JSON.parse(await file.text());
+
+        if (!Array.isArray(parsed)) {
+          throw new Error("JSON 必须是数组");
+        }
+
+        data = parsed;
+        render();
+        refreshScript();
+        setStatus(`已导入 ${data.length} 条数据`, 0);
+      } catch (error) {
+        setStatus(`导入失败：${error.message}`, 0);
+      } finally {
+        event.target.value = "";
+      }
+    });
+
+    $("#generate").addEventListener("click", async () => {
+      const invalidRow = data.some(
+        (ranking) =>
+          !Number.isFinite(Number(ranking.rank)) ||
+          Number(ranking.rank) <= 0 ||
+          !String(ranking.provinceId || "").trim() ||
+          !String(ranking.provinceEn || "").trim() ||
+          !Number.isFinite(Number(ranking.value)),
+      );
+
+      const duplicateRank =
+        new Set(data.map((ranking) => Number(ranking.rank))).size !==
+        data.length;
+
+      const duplicateId =
+        new Set(
+          data.map((ranking) =>
+            String(ranking.provinceId || "").trim().toUpperCase(),
+          ),
+        ).size !== data.length;
+
+      if (!data.length || invalidRow || duplicateRank || duplicateId) {
+        setStatus(
+          "生成失败：请补齐数据，并确保排名和府 ID 不重复",
+          0,
+        );
+        return;
+      }
+
+      if (!$("#script").value.trim()) {
+        setStatus("生成失败：完整音频文案不能为空", 0);
+        return;
+      }
+
+      const button = $("#generate");
+
+      button.disabled = true;
+      $("#result").style.display = "none";
+      $("#downloads").style.display = "none";
+      setStatus("正在调用 TTS 生成 WAV…", 25);
+
+      try {
+        const payload = {
+          title: $("#title").value.trim(),
+          outputName: safeName($("#outputName").value),
+          opening: $("#opening").value.trim(),
+          script: $("#script").value.trim(),
+          ttsEngine: $("#ttsEngine").value,
+          speaker: $("#speaker").value,
+          speechDuration: 3,
+          ttsSpeed: Number($("#ttsSpeed").value),
+          gap: Number($("#gap").value),
+          fps: Number($("#fps").value),
+          resolution: $("#resolution").value,
+          rankings: data,
+        };
+
+        $("#outputName").value = payload.outputName;
+
+        const response = await fetch("/api/generate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json; charset=UTF-8",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await readJson(response);
+
+        if (!response.ok) {
+          throw new Error(result.error || "生成失败");
+        }
+
+        setStatus("WAV、Timeline 与 MP4 已准备完毕", 100);
+        $("#result").style.display = "block";
+        $("#downloads").style.display = "flex";
+
+        $("#resultMeta").textContent =
+          `${payload.title} · ${Number(result.duration).toFixed(2)} 秒 · ` +
+          payload.outputName;
+
+        [
+          ["#wavDownload", "wav"],
+          ["#timelineDownload", "timeline"],
+          ["#mp4Download", "mp4"],
+        ].forEach(([selector, key]) => {
+          const link = $(selector);
+          link.href = result.files[key];
+          link.download = result.names[key];
+        });
+      } catch (error) {
+        setStatus(`生成失败：${error.message}`, 0);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    render();
+    refreshScript();
+    loadEngineCatalog();
+  </script>
+</body>
+</html>

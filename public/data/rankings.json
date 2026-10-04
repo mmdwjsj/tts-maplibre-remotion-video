@@ -1,0 +1,7 @@
+[
+  {"rank":1,"provinceId":"TH-10","province":"Bangkok","provinceEn":"Bangkok","provinceTh":"กรุงเทพมหานคร","value":1250,"narrationDuration":3.5},
+  {"rank":2,"provinceId":"TH-20","province":"Chon Buri","provinceEn":"Chon Buri","provinceTh":"ชลบุรี","value":980,"narrationDuration":3.3},
+  {"rank":3,"provinceId":"TH-50","province":"Chiang Mai","provinceEn":"Chiang Mai","provinceTh":"เชียงใหม่","value":850,"narrationDuration":3.4},
+  {"rank":4,"provinceId":"TH-83","province":"Phuket","provinceEn":"Phuket","provinceTh":"ภูเก็ต","value":720,"narrationDuration":3.1},
+  {"rank":5,"provinceId":"TH-21","province":"Rayong","provinceEn":"Rayong","provinceTh":"ระยอง","value":680,"narrationDuration":3.1}
+]

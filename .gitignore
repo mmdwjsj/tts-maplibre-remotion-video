@@ -1,0 +1,6 @@
+node_modules/
+out/
+.remotion/
+public/audio/*.wav
+public/audio/*.mp3
+!public/audio/.gitkeep

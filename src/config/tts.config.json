@@ -1,0 +1,80 @@
+{
+  "defaultEngine": "edge",
+  "timeoutMs": 120000,
+  "healthTimeoutMs": 1500,
+  "engines": {
+    "edge": {
+      "enabled": true,
+      "defaultModel": "edge-neural",
+      "defaultVoice": "th-TH-PremwadeeNeural",
+      "models": [
+        {"id": "edge-neural", "name": "Edge Neural"}
+      ]
+    },
+    "sapi": {
+      "enabled": true,
+      "defaultModel": "windows-sapi",
+      "defaultVoice": "",
+      "models": [
+        {"id": "windows-sapi", "name": "Windows SAPI"}
+      ]
+    },
+    "voxcpm2": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:10001",
+      "speechPath": "/v1/audio/speech",
+      "apiKey": "",
+      "defaultModel": "VoxCPM2",
+      "defaultVoice": "default",
+      "models": [
+        {"id": "VoxCPM2", "name": "VoxCPM 2"}
+      ],
+      "voices": [
+        {"id": "default", "name": "Default", "culture": "multi"}
+      ]
+    },
+    "moss-tts": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:10002",
+      "speechPath": "/v1/audio/speech",
+      "apiKey": "",
+      "defaultModel": "moss-tts",
+      "defaultVoice": "default",
+      "models": [
+        {"id": "moss-tts", "name": "MOSS-TTS"}
+      ],
+      "voices": [
+        {"id": "default", "name": "Default", "culture": "multi"}
+      ]
+    },
+    "kokoro": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:10003",
+      "speechPath": "/v1/audio/speech",
+      "apiKey": "",
+      "defaultModel": "kokoro",
+      "defaultVoice": "af_heart",
+      "models": [
+        {"id": "kokoro", "name": "Kokoro 82M"}
+      ],
+      "voices": [
+        {"id": "af_heart", "name": "Heart", "culture": "en-US"},
+        {"id": "af_bella", "name": "Bella", "culture": "en-US"}
+      ]
+    },
+    "sakthai": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:10004",
+      "speechPath": "/v1/audio/speech",
+      "apiKey": "",
+      "defaultModel": "sakthai",
+      "defaultVoice": "default",
+      "models": [
+        {"id": "sakthai", "name": "SakThai"}
+      ],
+      "voices": [
+        {"id": "default", "name": "Default Thai", "culture": "th-TH"}
+      ]
+    }
+  }
+}

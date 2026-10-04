@@ -1,0 +1,32 @@
+{
+  "name": "thailand-province-ranking-video",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "web": "node scripts/web-server.mjs",
+    "render": "remotion render src/index.ts ThailandProvinceRanking out/thailand-ranking.mp4",
+    "render:fast": "remotion render src/index.ts ThailandProvinceRanking out/thailand-ranking.mp4 --codec=h264 --crf=23 --image-format=jpeg --jpeg-quality=90 --concurrency=100%",
+    "still": "remotion still src/index.ts ThailandProvinceRanking out/preview.png --frame=210",
+    "typecheck": "tsc --noEmit",
+    "validate:data": "node scripts/validate-data.mjs"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "@travisvn/edge-tts": "^1.0.2",
+    "@turf/centroid": "^7.2.0",
+    "@turf/helpers": "^7.2.0",
+    "d3-geo": "^3.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0",
+    "xlsx": "^0.18.5",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/d3-geo": "^3.1.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}
