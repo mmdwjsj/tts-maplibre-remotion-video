@@ -83,8 +83,8 @@
     }
 
     button.primary {
-      width: 100%;
-      padding: 14px;
+      width: auto;
+      padding: 9px 14px;
       color: #041311;
       font-size: 15px;
       background: #2bc7b1;
@@ -365,7 +365,7 @@
 
       <div class="field">
         <label for="opening">开场白</label>
-        <textarea id="opening">欢迎观看泰国府级数据排名。</textarea>
+        <textarea id="opening">ยินดีต้อนรับสู่การจัดอันดับข้อมูลระดับจังหวัดของประเทศไทย</textarea>
       </div>
 
       <div class="field">
@@ -374,11 +374,22 @@
           <option value="">正在检测 TTS 引擎…</option>
         </select>
 
+        <label for="ttsModel">TTS 模型</label>
+        <select id="ttsModel" style="margin-bottom: 10px">
+          <option value="">请先选择引擎</option>
+        </select>
+
+        <label for="ttsLanguage">语言类型</label>
+        <select id="ttsLanguage" style="margin-bottom: 10px"><option value="auto">自动</option><option value="th">泰语</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select>
+
         <label for="speaker">解说语音</label>
         <select id="speaker">
           <option value="">正在读取可用语音…</option>
         </select>
       </div>
+
+      <div id="ttsCapabilityNote" class="hint"></div>
+      <div id="ttsAdvanced" class="field-grid"></div>
 
       <div class="field-grid">
         <div class="field">
@@ -429,19 +440,7 @@
       </p>
     </section>
 
-    <section class="card wide">
-      <h2>4 / 将要生成的完整音频文案</h2>
-
-      <textarea id="script" rows="10"></textarea>
-
-      <div class="toolbar" style="margin-top: 10px">
-        <button id="refreshScript" type="button">
-          根据开场白和排名重新生成文案
-        </button>
-      </div>
-
-      <p class="hint">可直接编辑；重新生成会覆盖当前文本。</p>
-    </section>
+    
 
     <section class="card wide">
       <div class="action-row">
@@ -466,6 +465,20 @@
         <strong>生成完成 ✓</strong>
         <div id="resultMeta" class="result-meta"></div>
       </div>
+    </section>
+
+    <section class="card wide">
+      <h2>4 / 将要生成的完整音频文案</h2>
+
+      <textarea id="script" rows="10"></textarea>
+
+      <div class="toolbar" style="margin-top: 10px">
+        <button id="refreshScript" type="button">
+          根据开场白和排名重新生成文案
+        </button>
+      </div>
+
+      <p class="hint">可直接编辑；重新生成会覆盖当前文本。</p>
     </section>
   </main>
 
@@ -608,43 +621,87 @@
       return response.json();
     }
 
-    async function loadEngineVoices() {
-      const engine = $("#ttsEngine").value;
+    let engineCatalog = [];
+    let currentCapabilities = null;
+    let requestVersion = 0;
 
-      if (!engine) {
-        $("#speaker").innerHTML =
-          '<option value="">没有可用的 TTS 引擎</option>';
+    function errorMessage(payload, fallback) {
+      return payload?.error?.message || payload?.error || payload?.message || fallback;
+    }
+
+    function renderCapabilities(capabilities) {
+      currentCapabilities = capabilities;
+      const languageOptions = capabilities.languages?.options || [];
+      $("#ttsLanguage").innerHTML = languageOptions.length
+        ? languageOptions.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")
+        : '<option value="auto">自动 / 服务决定</option>';
+      if (capabilities.languages?.defaultValue) $("#ttsLanguage").value = capabilities.languages.defaultValue;
+
+      const speed = capabilities.speed;
+      $("#ttsSpeed").closest(".field").style.display = speed?.status === "supported" || speed?.status === "conditional" ? "block" : "none";
+      if (speed?.defaultValue !== undefined) $("#ttsSpeed").value = speed.defaultValue;
+      if (speed?.min !== undefined) $("#ttsSpeed").min = speed.min;
+      if (speed?.max !== undefined) $("#ttsSpeed").max = speed.max;
+      if (speed?.step !== undefined) $("#ttsSpeed").step = speed.step;
+
+      $("#ttsAdvanced").innerHTML = (capabilities.parameters || []).map((parameter) => {
+        const id = `tts-param-${parameter.key}`;
+        const options = parameter.type === "select"
+          ? `<select id="${id}" data-tts-parameter="${escapeHtml(parameter.key)}">${(parameter.options || []).map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select>`
+          : `<input id="${id}" data-tts-parameter="${escapeHtml(parameter.key)}" type="${parameter.type === "number" ? "number" : parameter.type === "boolean" ? "checkbox" : "text"}" ${parameter.min !== undefined ? `min="${parameter.min}"` : ""} ${parameter.max !== undefined ? `max="${parameter.max}"` : ""} ${parameter.step !== undefined ? `step="${parameter.step}"` : ""} ${parameter.type === "boolean" && parameter.defaultValue ? "checked" : `value="${escapeHtml(parameter.defaultValue ?? "")}"`} />`;
+        return `<div class="field"><label for="${id}">${escapeHtml(parameter.label || parameter.key)}</label>${options}<div class="hint">${escapeHtml(parameter.description || "")}</div></div>`;
+      }).join("");
+      const unknown = Object.entries(capabilities).filter(([key, value]) => key !== "parameters" && value?.status === "unknown").map(([key]) => key);
+      $("#ttsCapabilityNote").textContent = unknown.length ? `尚未验证的能力：${unknown.join("、")}` : "";
+    }
+
+    async function loadEngineVoices(version = requestVersion) {
+      const model = $("#ttsModel").value;
+
+      if (!model) {
+        $("#speaker").innerHTML = '<option value="">请先选择模型</option>';
         return;
       }
 
-      $("#speaker").innerHTML =
-        '<option value="">正在读取语音…</option>';
-
       try {
         const response = await fetch(
-          `/api/tts/engines/${encodeURIComponent(engine)}/voices`,
+          `/api/tts/models/${encodeURIComponent(model)}/voices?language=${encodeURIComponent($("#ttsLanguage").value)}`,
         );
         const voices = await readJson(response);
-
-        if (!response.ok) {
-          throw new Error(voices.error || "语音列表读取失败");
-        }
-
-        $("#speaker").innerHTML =
-          Array.isArray(voices) && voices.length
-            ? voices
-                .map(
-                  (voice) =>
-                    `<option value="${escapeHtml(voice.id)}">${escapeHtml(
-                      voice.name,
-                    )} (${escapeHtml(voice.culture || "default")})</option>`,
-                )
-                .join("")
-            : '<option value="">使用引擎默认语音</option>';
+        if (!response.ok) throw new Error(errorMessage(voices, "语音读取失败"));
+        if (version !== requestVersion) return;
+        $("#speaker").innerHTML = voices.length ? voices.map((voice) => `<option value="${escapeHtml(voice.id)}">${escapeHtml(voice.name)} (${escapeHtml(voice.culture || "default")})</option>`).join("") : '<option value="">该语言没有可用语音</option>';
       } catch (error) {
+        if (version !== requestVersion) return;
         $("#speaker").innerHTML =
           `<option value="">${escapeHtml(error.message)}</option>`;
       }
+    }
+
+    async function loadModelCapabilities() {
+      const model = $("#ttsModel").value;
+      const version = ++requestVersion;
+      $("#ttsAdvanced").innerHTML = "";
+      if (!model) return;
+      try {
+        const response = await fetch(`/api/tts/models/${encodeURIComponent(model)}/capabilities`);
+        const capabilities = await readJson(response);
+        if (!response.ok) throw new Error(errorMessage(capabilities, "能力读取失败"));
+        if (version !== requestVersion) return;
+        renderCapabilities(capabilities);
+        await loadEngineVoices(version);
+      } catch (error) {
+        if (version === requestVersion) $("#ttsCapabilityNote").textContent = error.message;
+      }
+    }
+
+    function loadEngineModels() {
+      const engine = engineCatalog.find((item) => item.id === $("#ttsEngine").value);
+      $("#ttsModel").innerHTML = engine?.models?.length
+        ? engine.models.filter((model) => model.enabled).map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name)}</option>`).join("")
+        : '<option value="">没有可用模型</option>';
+      if (engine?.defaultModel) $("#ttsModel").value = engine.defaultModel;
+      loadModelCapabilities();
     }
 
     async function loadEngineCatalog() {
@@ -653,7 +710,7 @@
         const engines = await readJson(response);
 
         if (!response.ok) {
-          throw new Error(engines.error || "TTS 引擎读取失败");
+          throw new Error(errorMessage(engines, "TTS 引擎读取失败"));
         }
 
         if (!Array.isArray(engines) || engines.length === 0) {
@@ -664,6 +721,7 @@
           return;
         }
 
+        engineCatalog = engines;
         $("#ttsEngine").innerHTML = engines
           .map((engine) => {
             const disabled = engine.available ? "" : "disabled";
@@ -683,7 +741,7 @@
 
         if (firstAvailable) {
           $("#ttsEngine").value = firstAvailable.id;
-          await loadEngineVoices();
+          loadEngineModels();
         } else {
           $("#speaker").innerHTML =
             '<option value="">没有可用的 TTS 引擎</option>';
@@ -696,7 +754,9 @@
       }
     }
 
-    $("#ttsEngine").addEventListener("change", loadEngineVoices);
+    $("#ttsEngine").addEventListener("change", loadEngineModels);
+    $("#ttsModel").addEventListener("change", loadModelCapabilities);
+    $("#ttsLanguage").addEventListener("change", () => loadEngineVoices(++requestVersion));
 
     $("#title").addEventListener("input", (event) => {
       $("#previewTitle").textContent = event.target.value;
@@ -802,9 +862,12 @@
           opening: $("#opening").value.trim(),
           script: $("#script").value.trim(),
           ttsEngine: $("#ttsEngine").value,
+          modelId: $("#ttsModel").value,
+          language: $("#ttsLanguage").value,
           speaker: $("#speaker").value,
           speechDuration: 3,
           ttsSpeed: Number($("#ttsSpeed").value),
+          parameters: Object.fromEntries(Array.from(document.querySelectorAll("[data-tts-parameter]")).map((input) => [input.dataset.ttsParameter, input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : input.value])),
           gap: Number($("#gap").value),
           fps: Number($("#fps").value),
           resolution: $("#resolution").value,
@@ -824,7 +887,7 @@
         const result = await readJson(response);
 
         if (!response.ok) {
-          throw new Error(result.error || "生成失败");
+          throw new Error(errorMessage(result, "生成失败"));
         }
 
         setStatus("WAV、Timeline 与 MP4 已准备完毕", 100);
@@ -857,3 +920,6 @@
   </script>
 </body>
 </html>
+
+
+

@@ -1,7 +1,11 @@
 import fs from 'node:fs';
 
 export const normalizeToWav = async ({input, output, run, remotionCli}) => {
-  await run(process.execPath, [remotionCli, 'ffmpeg', '-y', '-i', input, '-ac', '1', '-ar', '24000', '-c:a', 'pcm_s16le', output]);
+  try {
+    await run(process.execPath, [remotionCli, 'ffmpeg', '-y', '-i', input, '-ac', '1', '-ar', '24000', '-c:a', 'pcm_s16le', output]);
+  } finally {
+    if (input !== output && fs.existsSync(input)) fs.rmSync(input, {force: true});
+  }
 };
 
 export const writeAudioResponse = async ({response, output, run, remotionCli}) => {

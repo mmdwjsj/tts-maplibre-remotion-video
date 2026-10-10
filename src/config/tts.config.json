@@ -7,17 +7,13 @@
       "enabled": true,
       "defaultModel": "edge-neural",
       "defaultVoice": "th-TH-PremwadeeNeural",
-      "models": [
-        {"id": "edge-neural", "name": "Edge Neural"}
-      ]
+      "models": [{ "id": "edge-neural", "name": "Edge Neural" }]
     },
     "sapi": {
       "enabled": true,
       "defaultModel": "windows-sapi",
       "defaultVoice": "",
-      "models": [
-        {"id": "windows-sapi", "name": "Windows SAPI"}
-      ]
+      "models": [{ "id": "windows-sapi", "name": "Windows SAPI" }]
     },
     "voxcpm2": {
       "enabled": true,
@@ -26,12 +22,8 @@
       "apiKey": "",
       "defaultModel": "VoxCPM2",
       "defaultVoice": "default",
-      "models": [
-        {"id": "VoxCPM2", "name": "VoxCPM 2"}
-      ],
-      "voices": [
-        {"id": "default", "name": "Default", "culture": "multi"}
-      ]
+      "models": [{ "id": "VoxCPM2", "name": "VoxCPM 2" }],
+      "voices": [{ "id": "default", "name": "Default", "culture": "multi" }]
     },
     "moss-tts": {
       "enabled": true,
@@ -40,12 +32,8 @@
       "apiKey": "",
       "defaultModel": "moss-tts",
       "defaultVoice": "default",
-      "models": [
-        {"id": "moss-tts", "name": "MOSS-TTS"}
-      ],
-      "voices": [
-        {"id": "default", "name": "Default", "culture": "multi"}
-      ]
+      "models": [{ "id": "moss-tts", "name": "MOSS-TTS" }],
+      "voices": [{ "id": "default", "name": "Default", "culture": "multi" }]
     },
     "kokoro": {
       "enabled": true,
@@ -54,12 +42,10 @@
       "apiKey": "",
       "defaultModel": "kokoro",
       "defaultVoice": "af_heart",
-      "models": [
-        {"id": "kokoro", "name": "Kokoro 82M"}
-      ],
+      "models": [{ "id": "kokoro", "name": "Kokoro 82M" }],
       "voices": [
-        {"id": "af_heart", "name": "Heart", "culture": "en-US"},
-        {"id": "af_bella", "name": "Bella", "culture": "en-US"}
+        { "id": "af_heart", "name": "Heart", "culture": "en-US" },
+        { "id": "af_bella", "name": "Bella", "culture": "en-US" }
       ]
     },
     "sakthai": {
@@ -69,11 +55,9 @@
       "apiKey": "",
       "defaultModel": "sakthai",
       "defaultVoice": "default",
-      "models": [
-        {"id": "sakthai", "name": "SakThai"}
-      ],
+      "models": [{ "id": "sakthai", "name": "SakThai" }],
       "voices": [
-        {"id": "default", "name": "Default Thai", "culture": "th-TH"}
+        { "id": "default", "name": "Default Thai", "culture": "th-TH" }
       ]
     }
   }

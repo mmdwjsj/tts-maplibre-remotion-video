@@ -5,7 +5,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createTtsRegistry } from "./tts/engine-registry.mjs";
 import { loadTtsConfig } from "./tts/log-config.mjs";
-import { normalizeTtsRequest } from "./tts/request.mjs";
+import { normalizeTtsRequest, normalizeUnifiedTtsRequest } from "./tts/request.mjs";
+import { validateTtsRequest } from "./tts/validation.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const generatedDir = path.join(root, "out", "generated");
@@ -31,6 +32,10 @@ const json = (res, status, value) => {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
 };
+const jsonError = (res, error) => json(res, error.statusCode || 500, {
+  error: { code: error.code || "TTS_ERROR", message: error.message },
+  message: error.message,
+});
 const safeName = (value) =>
   String(value || "")
     .trim()
@@ -104,6 +109,21 @@ const wavDuration = (file) => {
   if (dataTag < 0 || !byteRate) throw new Error("Request failed");
   return buffer.readUInt32LE(dataTag + 4) / byteRate;
 };
+const muxAudioIntoVideo = async ({ videoInput, audioInput, output }) => {
+  await run(process.execPath, [
+    remotionCli,
+    "ffmpeg",
+    "-y",
+    "-i", videoInput,
+    "-i", audioInput,
+    "-map", "0:v:0",
+    "-map", "1:a:0",
+    "-c:v", "copy",
+    "-c:a", "aac",
+    "-shortest",
+    output,
+  ]);
+};
 const readBody = (req) =>
   new Promise((resolve, reject) => {
     let body = "";
@@ -144,12 +164,42 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const modelsMatch = pathname.match(/^\/api\/tts\/engines\/([^/]+)\/models$/);
+  if (req.method === "GET" && modelsMatch) {
+    const engine = ttsRegistry.get(modelsMatch[1]);
+    if (!engine) return json(res, 404, { error: { code: "UNKNOWN_ENGINE", message: "Unknown TTS engine" } });
+    return json(res, 200, engine.descriptor.models);
+  }
+
+  const capabilitiesMatch = pathname.match(/^\/api\/tts\/models\/([^/]+)\/capabilities$/);
+  if (req.method === "GET" && capabilitiesMatch) {
+    const model = ttsRegistry.getModel(capabilitiesMatch[1]);
+    if (!model) return json(res, 404, { error: { code: "UNKNOWN_MODEL", message: "Unknown TTS model" } });
+    return json(res, 200, model.capabilities);
+  }
+
+  const modelVoicesMatch = pathname.match(/^\/api\/tts\/models\/([^/]+)\/voices$/);
+  if (req.method === "GET" && modelVoicesMatch) {
+    try {
+      const modelId = modelVoicesMatch[1];
+      const descriptor = ttsRegistry.listDescriptors().find((item) => item.models.some((model) => model.id === modelId));
+      const engine = descriptor && ttsRegistry.get(descriptor.id);
+      if (!engine) throw Object.assign(new Error("Unknown TTS model"), { statusCode: 404, code: "UNKNOWN_MODEL" });
+      const language = new URL(req.url, "http://localhost").searchParams.get("language") || "auto";
+      json(res, 200, await engine.listVoices(modelId, language));
+    } catch (error) {
+      jsonError(res, error);
+    }
+    return;
+  }
+
   const voicesMatch = pathname.match(/^\/api\/tts\/engines\/([^/]+)\/voices$/);
   if (req.method === "GET" && voicesMatch) {
     try {
       const engine = ttsRegistry.get(voicesMatch[1]);
       if (!engine) throw new Error("Request failed");
-      json(res, 200, await engine.listVoices());
+      const language = new URL(req.url, "http://localhost").searchParams.get("language") || "auto";
+      json(res, 200, await engine.listVoices(engine.descriptor.defaultModel, language));
     } catch (error) {
       json(res, 500, { error: error.message });
     }
@@ -177,15 +227,21 @@ const server = http.createServer(async (req, res) => {
       const engineId = String(
         body.ttsEngine || ttsConfig.defaultEngine || "edge",
       );
-      const engine = ttsRegistry.get(engineId);
-      if (!engine) throw new Error(`Unknown TTS engine: ${engineId}`);
+      const descriptor = ttsRegistry.get(engineId)?.descriptor;
+      const unifiedRequest = normalizeUnifiedTtsRequest(body, {
+        engineId,
+        modelId: descriptor?.defaultModel,
+        voiceId: descriptor?.defaultVoice,
+      });
+      const { engine } = await validateTtsRequest(ttsRegistry, unifiedRequest);
       await engine.synthesize({
         ...ttsRequest,
+        language: unifiedRequest.language,
+        voice: unifiedRequest.voiceId,
+        model: unifiedRequest.modelId,
+        speed: unifiedRequest.controls.speed,
+        format: unifiedRequest.output.format,
         textPath,
-        model: String(body.ttsModel || ""),
-        
-        targetSeconds: Number(body.speechDuration) || 3,
-        
         output: wavPath,
       });
 
@@ -233,7 +289,8 @@ const server = http.createServer(async (req, res) => {
         speed: ttsRequest.speed,
         format: ttsRequest.format,
         speaker: ttsRequest.voice,
-        targetSpeechDuration: Number(body.speechDuration),
+        targetSpeechDuration: ttsRequest.targetSeconds,
+        ttsModel: ttsRequest.model,
         gap,
         totalDuration: +duration.toFixed(3),
         totalFrames: Math.ceil(duration * fps),
@@ -264,7 +321,7 @@ const server = http.createServer(async (req, res) => {
         },
       });
     } catch (error) {
-      json(res, 500, { error: error.message });
+      jsonError(res, error);
     }
     return;
   }
@@ -293,6 +350,12 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => console.log(`Web UI: http://localhost:${port}`));
+
+
+
+
+
+
 
 
 

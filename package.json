@@ -9,6 +9,7 @@
     "render:fast": "remotion render src/index.ts ThailandProvinceRanking out/thailand-ranking.mp4 --codec=h264 --crf=23 --image-format=jpeg --jpeg-quality=90 --concurrency=100%",
     "still": "remotion still src/index.ts ThailandProvinceRanking out/preview.png --frame=210",
     "typecheck": "tsc --noEmit",
+    "test:tts": "node --test scripts/tts/architecture.test.mjs",
     "validate:data": "node scripts/validate-data.mjs"
   },
   "dependencies": {

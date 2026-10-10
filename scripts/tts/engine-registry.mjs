@@ -1,7 +1,8 @@
 ﻿import fs from "node:fs";
 import path from "node:path";
-import { EdgeTTS } from "@travisvn/edge-tts";
+import { Communicate } from "@travisvn/edge-tts";
 import { normalizeToWav, writeAudioResponse } from "./audio.mjs";
+import { buildEngineDescriptors } from "./capabilities.mjs";
 
 const timeoutMs = Math.max(
   5_000,
@@ -44,7 +45,10 @@ const selectVoiceForLanguage = (voices, language, requestedVoice) => {
   return voices.find((item) => String(item.culture || "").toLowerCase().startsWith(language.toLowerCase()))?.id || voices[0]?.id;
 };
 
-const createEdgeEngine = ({ run, remotionCli }) => ({
+const createEdgeEngine = ({ run,
+  remotionCli,
+  engineConfig = {},
+  config = {}, }) => ({
   id: "edge",
   name: "Microsoft Edge TTS",
   kind: "cloud",
@@ -52,10 +56,13 @@ const createEdgeEngine = ({ run, remotionCli }) => ({
   async health() {
     return { available: true };
   },
-  async listVoices() {
-    return edgeVoices;
+  async listVoices(_modelId, language) {
+    if (!language || language === "auto") return edgeVoices;
+    return edgeVoices.filter((voice) =>
+      voice.culture.toLowerCase().startsWith(language.toLowerCase()),
+    );
   },
-  async synthesize({ text, language, voice, targetSeconds, speed = 1, output }) {
+  async synthesize({ text, language, voice, targetSeconds = 3, speed = 1, output }) {
     const paragraphs = Math.max(
       1,
       text.split(/\n\s*\n/).filter(Boolean).length,
@@ -64,13 +71,58 @@ const createEdgeEngine = ({ run, remotionCli }) => ({
     const desiredSeconds = Math.max(0.5, targetSeconds * paragraphs);
     const automaticRate = Math.round((estimatedSeconds / desiredSeconds - 1) * 100);
     const ratePercent = Math.max(-50, Math.min(100, Math.round((Number(speed) - 1) * 100 + automaticRate)));
-    const tts = new EdgeTTS(text, selectVoiceForLanguage(edgeVoices, language, voice), {
+    
+    const edgeTimeoutMs = Math.max(
+      5_000,
+      Number(process.env.EDGE_TTS_TIMEOUT_MS || engineConfig.timeoutMs) ||
+      Math.min(config.timeoutMs || timeoutMs, 30_000),
+    );
+
+    const communicate = new Communicate(text, {
+      voice: selectVoiceForLanguage(edgeVoices, language, voice),
       rate: `${ratePercent >= 0 ? "+" : ""}${ratePercent}%`,
-      connectionTimeout: Math.min(timeoutMs, 30_000),
+      connectionTimeout: edgeTimeoutMs,
+      proxy: process.env.EDGE_TTS_PROXY || engineConfig.proxy || undefined,
     });
-    const result = await withTimeout(tts.synthesize(), timeoutMs, "Edge TTS");
+
+    const synthesize = async () => {
+      const chunks = [];
+
+      for await (const chunk of communicate.stream()) {
+        if (chunk.type === "audio" && chunk.data) {
+          chunks.push(chunk.data);
+        }
+      }
+
+      if (!chunks.length) {
+        throw new Error("Edge TTS returned no audio data");
+      }
+
+      return Buffer.concat(chunks);
+    };
+
+    let audio;
+
+    try {
+      audio = await withTimeout(
+        synthesize(),
+        edgeTimeoutMs,
+        "Edge TTS connection/synthesis",
+      );
+    } catch (error) {
+      if (/timed out/i.test(error.message)) {
+        throw new Error(
+          `Edge TTS 无法在 ${edgeTimeoutMs}ms 内连接微软语音服务。` +
+            "请检查网络，或设置 EDGE_TTS_PROXY。",
+        );
+      }
+
+      throw error;
+    }
+
     const source = `${output}.source.mp3`;
-    fs.writeFileSync(source, Buffer.from(await result.audio.arrayBuffer()));
+    fs.writeFileSync(source, audio);
+
     await normalizeToWav({ input: source, output, run, remotionCli });
   },
 });
@@ -83,14 +135,18 @@ const createSapiEngine = ({ runPowerShell, root }) => ({
   async health() {
     return { available: process.platform === "win32" };
   },
-  async listVoices() {
+  async listVoices(_modelId, language) {
     const output = await runPowerShell(
       path.join(root, "scripts", "tts-speakers.ps1"),
     );
     const voices = output ? JSON.parse(output) : [];
-    return Array.isArray(voices) ? voices : [voices];
+    const result = Array.isArray(voices) ? voices : [voices];
+    if (!language || language === "auto") return result;
+    return result.filter((voice) =>
+      String(voice.culture || "").toLowerCase().startsWith(language.toLowerCase()),
+    );
   },
-  async synthesize({ textPath, voice, targetSeconds, speed = 1, output }) {
+  async synthesize({ textPath, voice, targetSeconds = 3, speed = 1, output }) {
     await runPowerShell(
       path.join(root, "scripts", "synthesize-wav.ps1"),
       [
@@ -192,10 +248,14 @@ const createHttpEngine = ({
         return { available: false, reason: error.message };
       }
     },
-    async listVoices() {
-      return voices;
+    async listVoices(_modelId, language) {
+      if (!language || language === "auto") return voices;
+      return voices.filter((voice) => {
+        const culture = String(voice.culture || "").toLowerCase();
+        return !culture || culture === "default" || culture === "multi" || culture.startsWith(language.toLowerCase());
+      });
     },
-    async synthesize({ text, language, model: selectedModel, voice, speed, format, output }) {
+    async synthesize({ text, language, model: selectedModel, voice, speed = 1, format = "wav", output }) {
       if (!baseUrl)
         throw new Error(
           `${name} is not configured. Set ${envPrefix}_BASE_URL.`,
@@ -208,9 +268,9 @@ const createHttpEngine = ({
           model: selectedModel || model,
           input: text,
           voice: voice || engineConfig.defaultVoice || voices[0]?.id,
-          response_format: format || "wav",
+          response_format: format,
           ...(language && language !== "auto" ? { language } : {}),
-          speed: speed || 1,
+          speed,
         }),
       });
       await writeAudioResponse({ response, output, run, remotionCli });
@@ -220,9 +280,19 @@ const createHttpEngine = ({
 
 export const createTtsRegistry = (dependencies) => {
   const config = dependencies.config || { defaultEngine: "edge", engines: {} };
+  const descriptors = buildEngineDescriptors(config);
+  const descriptorById = new Map(descriptors.map((item) => [item.id, item]));
+  const modelIds = new Map();
+  for (const descriptor of descriptors) {
+    for (const model of descriptor.models) {
+      const owner = modelIds.get(model.id);
+      if (owner) throw new Error(`Duplicate TTS model id ${model.id} in ${owner} and ${descriptor.id}`);
+      modelIds.set(model.id, descriptor.id);
+    }
+  }
   const getEngineConfig = (id) => config.engines[id] || {};
   const engines = [
-    createEdgeEngine(dependencies),
+    createEdgeEngine({...dependencies,config,engineConfig: getEngineConfig("edge"),}),
     createSapiEngine(dependencies),
     createHttpEngine({
       id: "voxcpm2",
@@ -258,13 +328,20 @@ export const createTtsRegistry = (dependencies) => {
     }),
   ];
   const byId = new Map(engines.map((engine) => [engine.id, engine]));
+  for (const engine of engines) engine.descriptor = descriptorById.get(engine.id);
   return {
     get: (id) => byId.get(id),
+    getModel: (modelId) => {
+      const engineId = modelIds.get(modelId);
+      return engineId
+        ? descriptorById.get(engineId)?.models.find((model) => model.id === modelId)
+        : undefined;
+    },
+    listDescriptors: () => descriptors,
     describe: () =>
       Promise.all(
         engines.map(async (engine) => ({
-          id: engine.id,
-          name: engine.name,
+          ...engine.descriptor,
           kind: engine.kind,
           configured: engine.configured,
           ...(await engine.health()),
@@ -272,5 +349,6 @@ export const createTtsRegistry = (dependencies) => {
       ),
   };
 };
+
 
 
