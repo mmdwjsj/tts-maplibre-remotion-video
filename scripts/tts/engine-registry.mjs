@@ -42,13 +42,40 @@ const edgeVoices = [
 const selectVoiceForLanguage = (voices, language, requestedVoice) => {
   if (requestedVoice) return requestedVoice;
   if (!language || language === "auto") return voices[0]?.id;
-  return voices.find((item) => String(item.culture || "").toLowerCase().startsWith(language.toLowerCase()))?.id || voices[0]?.id;
+  return (
+    voices.find((item) =>
+      String(item.culture || "")
+        .toLowerCase()
+        .startsWith(language.toLowerCase()),
+    )?.id || voices[0]?.id
+  );
 };
 
-const createEdgeEngine = ({ run,
+const languageMatchesCulture = (culture, language) => {
+  const normalizedCulture = String(culture || "").toLowerCase();
+  const normalizedLanguage = String(language || "").toLowerCase();
+
+  if (
+    !normalizedCulture ||
+    normalizedCulture === "default" ||
+    normalizedCulture === "multi"
+  ) {
+    return true;
+  }
+
+  return (
+    normalizedCulture === normalizedLanguage ||
+    normalizedCulture.startsWith(`${normalizedLanguage}-`) ||
+    normalizedLanguage.startsWith(`${normalizedCulture}-`)
+  );
+};
+
+const createEdgeEngine = ({
+  run,
   remotionCli,
   engineConfig = {},
-  config = {}, }) => ({
+  config = {},
+}) => ({
   id: "edge",
   name: "Microsoft Edge TTS",
   kind: "cloud",
@@ -62,20 +89,32 @@ const createEdgeEngine = ({ run,
       voice.culture.toLowerCase().startsWith(language.toLowerCase()),
     );
   },
-  async synthesize({ text, language, voice, targetSeconds = 3, speed = 1, output }) {
+  async synthesize({
+    text,
+    language,
+    voice,
+    targetSeconds = 3,
+    speed = 1,
+    output,
+  }) {
     const paragraphs = Math.max(
       1,
       text.split(/\n\s*\n/).filter(Boolean).length,
     );
     const estimatedSeconds = Math.max(0.5, text.length / 12);
     const desiredSeconds = Math.max(0.5, targetSeconds * paragraphs);
-    const automaticRate = Math.round((estimatedSeconds / desiredSeconds - 1) * 100);
-    const ratePercent = Math.max(-50, Math.min(100, Math.round((Number(speed) - 1) * 100 + automaticRate)));
-    
+    const automaticRate = Math.round(
+      (estimatedSeconds / desiredSeconds - 1) * 100,
+    );
+    const ratePercent = Math.max(
+      -50,
+      Math.min(100, Math.round((Number(speed) - 1) * 100 + automaticRate)),
+    );
+
     const edgeTimeoutMs = Math.max(
       5_000,
       Number(process.env.EDGE_TTS_TIMEOUT_MS || engineConfig.timeoutMs) ||
-      Math.min(config.timeoutMs || timeoutMs, 30_000),
+        Math.min(config.timeoutMs || timeoutMs, 30_000),
     );
 
     const communicate = new Communicate(text, {
@@ -143,7 +182,9 @@ const createSapiEngine = ({ runPowerShell, root }) => ({
     const result = Array.isArray(voices) ? voices : [voices];
     if (!language || language === "auto") return result;
     return result.filter((voice) =>
-      String(voice.culture || "").toLowerCase().startsWith(language.toLowerCase()),
+      String(voice.culture || "")
+        .toLowerCase()
+        .startsWith(language.toLowerCase()),
     );
   },
   async synthesize({ textPath, voice, targetSeconds = 3, speed = 1, output }) {
@@ -159,7 +200,9 @@ const createSapiEngine = ({ runPowerShell, root }) => ({
         "-TargetSeconds",
         String(targetSeconds),
         "-Rate",
-        String(Math.max(-10, Math.min(10, Math.round((Number(speed) - 1) * 10)))),
+        String(
+          Math.max(-10, Math.min(10, Math.round((Number(speed) - 1) * 10))),
+        ),
       ],
       timeoutMs,
     );
@@ -250,12 +293,19 @@ const createHttpEngine = ({
     },
     async listVoices(_modelId, language) {
       if (!language || language === "auto") return voices;
-      return voices.filter((voice) => {
-        const culture = String(voice.culture || "").toLowerCase();
-        return !culture || culture === "default" || culture === "multi" || culture.startsWith(language.toLowerCase());
-      });
+      return voices.filter((voice) =>
+        languageMatchesCulture(voice.culture, language),
+      );
     },
-    async synthesize({ text, language, model: selectedModel, voice, speed = 1, format = "wav", output }) {
+    async synthesize({
+      text,
+      language,
+      model: selectedModel,
+      voice,
+      speed = 1,
+      format = "wav",
+      output,
+    }) {
       if (!baseUrl)
         throw new Error(
           `${name} is not configured. Set ${envPrefix}_BASE_URL.`,
@@ -286,13 +336,20 @@ export const createTtsRegistry = (dependencies) => {
   for (const descriptor of descriptors) {
     for (const model of descriptor.models) {
       const owner = modelIds.get(model.id);
-      if (owner) throw new Error(`Duplicate TTS model id ${model.id} in ${owner} and ${descriptor.id}`);
+      if (owner)
+        throw new Error(
+          `Duplicate TTS model id ${model.id} in ${owner} and ${descriptor.id}`,
+        );
       modelIds.set(model.id, descriptor.id);
     }
   }
   const getEngineConfig = (id) => config.engines[id] || {};
   const engines = [
-    createEdgeEngine({...dependencies,config,engineConfig: getEngineConfig("edge"),}),
+    createEdgeEngine({
+      ...dependencies,
+      config,
+      engineConfig: getEngineConfig("edge"),
+    }),
     createSapiEngine(dependencies),
     createHttpEngine({
       id: "voxcpm2",
@@ -314,7 +371,7 @@ export const createTtsRegistry = (dependencies) => {
       id: "kokoro",
       name: "Kokoro",
       envPrefix: "KOKORO",
-      defaults: { model: "kokoro", voices: "af_heart" },
+      defaults: { model: "kokoro-thai", voices: "speaker_00" },
       engineConfig: getEngineConfig("kokoro"),
       ...dependencies,
     }),
@@ -328,13 +385,16 @@ export const createTtsRegistry = (dependencies) => {
     }),
   ];
   const byId = new Map(engines.map((engine) => [engine.id, engine]));
-  for (const engine of engines) engine.descriptor = descriptorById.get(engine.id);
+  for (const engine of engines)
+    engine.descriptor = descriptorById.get(engine.id);
   return {
     get: (id) => byId.get(id),
     getModel: (modelId) => {
       const engineId = modelIds.get(modelId);
       return engineId
-        ? descriptorById.get(engineId)?.models.find((model) => model.id === modelId)
+        ? descriptorById
+            .get(engineId)
+            ?.models.find((model) => model.id === modelId)
         : undefined;
     },
     listDescriptors: () => descriptors,
@@ -349,6 +409,3 @@ export const createTtsRegistry = (dependencies) => {
       ),
   };
 };
-
-
-

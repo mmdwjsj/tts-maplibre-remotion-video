@@ -12,20 +12,38 @@ const parameter = (definition) => ({
 
 const unknownFeature = () => state("unknown");
 
-const httpCapabilities = (engineConfig) => ({
-  languages: state("unknown", { options: engineConfig.languages || [] }),
-  voices: state("conditional", {
-    reason: "Only configured or service-discovered voices are exposed",
-  }),
-  speed: numeric("Speed", 0.25, 4, 0.05, 1),
-  pitch: unknownFeature(),
-  volume: unknownFeature(),
-  streaming: unknownFeature(),
-  ssml: unknownFeature(),
-  voiceCloning: unknownFeature(),
-  referenceAudio: unknownFeature(),
-  parameters: (engineConfig.parameters || []).map(parameter),
-});
+const httpCapabilities = (engineConfig) => {
+  const languages = engineConfig.languages || [];
+  const speed = engineConfig.speed || {};
+
+  return {
+    languages: state(languages.length ? "supported" : "unknown", {
+      options: languages,
+      ...(languages.length
+        ? {
+            defaultValue: engineConfig.defaultLanguage || languages[0].value,
+          }
+        : {}),
+    }),
+    voices: state("conditional", {
+      reason: "Only configured or service-discovered voices are exposed",
+    }),
+    speed: numeric(
+      "Speed",
+      speed.min ?? 0.25,
+      speed.max ?? 4,
+      speed.step ?? 0.05,
+      speed.defaultValue ?? 1,
+    ),
+    pitch: unknownFeature(),
+    volume: unknownFeature(),
+    streaming: unknownFeature(),
+    ssml: unknownFeature(),
+    voiceCloning: unknownFeature(),
+    referenceAudio: unknownFeature(),
+    parameters: (engineConfig.parameters || []).map(parameter),
+  };
+};
 
 export const buildEngineDescriptors = (config = {}) => {
   const engineConfig = config.engines || {};
@@ -106,4 +124,3 @@ export const buildEngineDescriptors = (config = {}) => {
     };
   });
 };
-

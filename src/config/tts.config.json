@@ -40,12 +40,30 @@
       "baseUrl": "http://127.0.0.1:10003",
       "speechPath": "/v1/audio/speech",
       "apiKey": "",
-      "defaultModel": "kokoro",
-      "defaultVoice": "af_heart",
-      "models": [{ "id": "kokoro", "name": "Kokoro 82M" }],
+      "defaultModel": "kokoro-thai",
+      "defaultVoice": "speaker_00",
+      "models": [{ "id": "kokoro-thai", "name": "Kokoro Thai" }],
+      "languages": [{ "value": "th-TH", "label": "Thai (Thailand)" }],
+      "defaultLanguage": "th-TH",
+      "speed": {
+        "min": 0.5,
+        "max": 2,
+        "step": 0.05,
+        "defaultValue": 1
+      },
       "voices": [
-        { "id": "af_heart", "name": "Heart", "culture": "en-US" },
-        { "id": "af_bella", "name": "Bella", "culture": "en-US" }
+        { "id": "speaker_00", "name": "Speaker 00", "culture": "th-TH" },
+        { "id": "speaker_01", "name": "Speaker 01", "culture": "th-TH" },
+        { "id": "speaker_02", "name": "Speaker 02", "culture": "th-TH" },
+        { "id": "speaker_03", "name": "Speaker 03", "culture": "th-TH" },
+        { "id": "speaker_04", "name": "Speaker 04", "culture": "th-TH" },
+        { "id": "speaker_05", "name": "Speaker 05", "culture": "th-TH" },
+        { "id": "speaker_06", "name": "Speaker 06", "culture": "th-TH" },
+        { "id": "speaker_07", "name": "Speaker 07", "culture": "th-TH" },
+        { "id": "speaker_08", "name": "Speaker 08", "culture": "th-TH" },
+        { "id": "speaker_09", "name": "Speaker 09", "culture": "th-TH" },
+        { "id": "speaker_10", "name": "Speaker 10", "culture": "th-TH" },
+        { "id": "speaker_11", "name": "Speaker 11", "culture": "th-TH" }
       ]
     },
     "sakthai": {
