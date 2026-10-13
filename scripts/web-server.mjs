@@ -5,7 +5,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createTtsRegistry } from "./tts/engine-registry.mjs";
 import { loadTtsConfig } from "./tts/log-config.mjs";
-import { normalizeTtsRequest, normalizeUnifiedTtsRequest } from "./tts/request.mjs";
+import {
+  normalizeTtsRequest,
+  normalizeUnifiedTtsRequest,
+} from "./tts/request.mjs";
 import { validateTtsRequest } from "./tts/validation.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,10 +35,11 @@ const json = (res, status, value) => {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(value));
 };
-const jsonError = (res, error) => json(res, error.statusCode || 500, {
-  error: { code: error.code || "TTS_ERROR", message: error.message },
-  message: error.message,
-});
+const jsonError = (res, error) =>
+  json(res, error.statusCode || 500, {
+    error: { code: error.code || "TTS_ERROR", message: error.message },
+    message: error.message,
+  });
 const safeName = (value) =>
   String(value || "")
     .trim()
@@ -109,17 +113,91 @@ const wavDuration = (file) => {
   if (dataTag < 0 || !byteRate) throw new Error("Request failed");
   return buffer.readUInt32LE(dataTag + 4) / byteRate;
 };
+
+const insertAudioGaps = async ({
+  input,
+  output,
+  duration,
+  gap,
+  items,
+  run,
+  remotionCli,
+}) => {
+  if (!gap || gap <= 0 || items.length < 2) return input;
+
+  const totalCharacters =
+    items.reduce((sum, item) => sum + item.text.length, 0) || 1;
+
+  const spokenDurations = items.map(
+    (item) => (duration * item.text.length) / totalCharacters,
+  );
+
+  const filters = [];
+  const concatInputs = [];
+  let cursor = 0;
+
+  spokenDurations.forEach((segmentDuration, index) => {
+    const audioLabel = `a${index}`;
+
+    filters.push(
+      `[0:a]atrim=start=${cursor}:end=${cursor + segmentDuration},` +
+        `asetpts=PTS-STARTPTS[${audioLabel}]`,
+    );
+    concatInputs.push(`[${audioLabel}]`);
+
+    cursor += segmentDuration;
+
+    if (index < spokenDurations.length - 1) {
+      const silenceLabel = `s${index}`;
+
+      filters.push(`anullsrc=r=24000:cl=mono:d=${gap}[${silenceLabel}]`);
+      concatInputs.push(`[${silenceLabel}]`);
+    }
+  });
+
+  const filterComplex =
+    `${filters.join(";")};` +
+    `${concatInputs.join("")}concat=n=${concatInputs.length}:v=0:a=1[out]`;
+
+  await run(process.execPath, [
+    remotionCli,
+    "ffmpeg",
+    "-y",
+    "-i",
+    input,
+    "-filter_complex",
+    filterComplex,
+    "-map",
+    "[out]",
+    "-ar",
+    "24000",
+    "-ac",
+    "1",
+    "-c:a",
+    "pcm_s16le",
+    output,
+  ]);
+
+  return output;
+};
+
 const muxAudioIntoVideo = async ({ videoInput, audioInput, output }) => {
   await run(process.execPath, [
     remotionCli,
     "ffmpeg",
     "-y",
-    "-i", videoInput,
-    "-i", audioInput,
-    "-map", "0:v:0",
-    "-map", "1:a:0",
-    "-c:v", "copy",
-    "-c:a", "aac",
+    "-i",
+    videoInput,
+    "-i",
+    audioInput,
+    "-map",
+    "0:v:0",
+    "-map",
+    "1:a:0",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
     "-shortest",
     output,
   ]);
@@ -135,8 +213,11 @@ const readBody = (req) =>
       }
     });
     req.on("end", () => {
-      try { resolve(JSON.parse(body || "{}")); }
-      catch { reject(new Error("Invalid JSON request")); }
+      try {
+        resolve(JSON.parse(body || "{}"));
+      } catch {
+        reject(new Error("Invalid JSON request"));
+      }
     });
     req.on("error", reject);
   });
@@ -148,7 +229,9 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && pathname === "/api/tts/speakers") {
     try {
-      const output = await runPowerShell(path.join(root, "scripts", "tts-speakers.ps1"));
+      const output = await runPowerShell(
+        path.join(root, "scripts", "tts-speakers.ps1"),
+      );
     } catch (error) {
       json(res, 500, { error: error.message });
     }
@@ -167,25 +250,43 @@ const server = http.createServer(async (req, res) => {
   const modelsMatch = pathname.match(/^\/api\/tts\/engines\/([^/]+)\/models$/);
   if (req.method === "GET" && modelsMatch) {
     const engine = ttsRegistry.get(modelsMatch[1]);
-    if (!engine) return json(res, 404, { error: { code: "UNKNOWN_ENGINE", message: "Unknown TTS engine" } });
+    if (!engine)
+      return json(res, 404, {
+        error: { code: "UNKNOWN_ENGINE", message: "Unknown TTS engine" },
+      });
     return json(res, 200, engine.descriptor.models);
   }
 
-  const capabilitiesMatch = pathname.match(/^\/api\/tts\/models\/([^/]+)\/capabilities$/);
+  const capabilitiesMatch = pathname.match(
+    /^\/api\/tts\/models\/([^/]+)\/capabilities$/,
+  );
   if (req.method === "GET" && capabilitiesMatch) {
     const model = ttsRegistry.getModel(capabilitiesMatch[1]);
-    if (!model) return json(res, 404, { error: { code: "UNKNOWN_MODEL", message: "Unknown TTS model" } });
+    if (!model)
+      return json(res, 404, {
+        error: { code: "UNKNOWN_MODEL", message: "Unknown TTS model" },
+      });
     return json(res, 200, model.capabilities);
   }
 
-  const modelVoicesMatch = pathname.match(/^\/api\/tts\/models\/([^/]+)\/voices$/);
+  const modelVoicesMatch = pathname.match(
+    /^\/api\/tts\/models\/([^/]+)\/voices$/,
+  );
   if (req.method === "GET" && modelVoicesMatch) {
     try {
       const modelId = modelVoicesMatch[1];
-      const descriptor = ttsRegistry.listDescriptors().find((item) => item.models.some((model) => model.id === modelId));
+      const descriptor = ttsRegistry
+        .listDescriptors()
+        .find((item) => item.models.some((model) => model.id === modelId));
       const engine = descriptor && ttsRegistry.get(descriptor.id);
-      if (!engine) throw Object.assign(new Error("Unknown TTS model"), { statusCode: 404, code: "UNKNOWN_MODEL" });
-      const language = new URL(req.url, "http://localhost").searchParams.get("language") || "auto";
+      if (!engine)
+        throw Object.assign(new Error("Unknown TTS model"), {
+          statusCode: 404,
+          code: "UNKNOWN_MODEL",
+        });
+      const language =
+        new URL(req.url, "http://localhost").searchParams.get("language") ||
+        "auto";
       json(res, 200, await engine.listVoices(modelId, language));
     } catch (error) {
       jsonError(res, error);
@@ -198,8 +299,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const engine = ttsRegistry.get(voicesMatch[1]);
       if (!engine) throw new Error("Request failed");
-      const language = new URL(req.url, "http://localhost").searchParams.get("language") || "auto";
-      json(res, 200, await engine.listVoices(engine.descriptor.defaultModel, language));
+      const language =
+        new URL(req.url, "http://localhost").searchParams.get("language") ||
+        "auto";
+      json(
+        res,
+        200,
+        await engine.listVoices(engine.descriptor.defaultModel, language),
+      );
     } catch (error) {
       json(res, 500, { error: error.message });
     }
@@ -245,24 +352,28 @@ const server = http.createServer(async (req, res) => {
         output: wavPath,
       });
 
-      const duration = wavDuration(wavPath);
+      const sourceDuration = wavDuration(wavPath);
       const fps = Math.max(1, Number(body.fps) || 30);
       const gap = Math.max(0, Number(body.gap) || 0);
       const opening = String(body.opening || "").trim();
       const items = [
         ...(opening ? [{ type: "opening", text: opening }] : []),
-        ...body.rankings.slice().sort((a, b) => a.rank - b.rank).map((ranking) => ({
-          type: "ranking", rank: ranking.rank, provinceId: ranking.provinceId,
-          provinceEn: ranking.provinceEn, provinceTh: ranking.provinceTh,
-          text: `Rank ${ranking.rank}: ${ranking.provinceTh || ranking.provinceEn} (${ranking.provinceEn}), ${Number(ranking.value).toLocaleString()}`,
-        })),
+        ...body.rankings
+          .slice()
+          .sort((a, b) => b.rank - a.rank)
+          .map((ranking) => ({
+            type: "ranking",
+            rank: ranking.rank,
+            provinceId: ranking.provinceId,
+            provinceEn: ranking.provinceEn,
+            provinceTh: ranking.provinceTh,
+            text: `Rank ${ranking.rank}: ${ranking.provinceTh || ranking.provinceEn} (${ranking.provinceEn}), ${Number(ranking.value).toLocaleString()}`,
+          })),
       ];
       const totalCharacters =
         items.reduce((sum, item) => sum + item.text.length, 0) || 1;
-      const spokenDuration = Math.max(
-        0,
-        duration - gap * Math.max(0, items.length - 1),
-      );
+      const duration = sourceDuration;
+      const spokenDuration = Math.max(0, sourceDuration);
       let cursor = 0;
       const segments = items.map((item, index) => {
         const segmentDuration =
@@ -292,18 +403,71 @@ const server = http.createServer(async (req, res) => {
         targetSpeechDuration: ttsRequest.targetSeconds,
         ttsModel: ttsRequest.model,
         gap,
-        totalDuration: +duration.toFixed(3),
-        totalFrames: Math.ceil(duration * fps),
+        totalDuration: +(
+          sourceDuration +
+          gap * Math.max(0, items.length - 1)
+        ).toFixed(3),
+        totalFrames: Math.ceil(
+          (sourceDuration + gap * Math.max(0, items.length - 1)) * fps,
+        ),
         segments,
       };
       fs.writeFileSync(timelinePath, JSON.stringify(timeline, null, 2), "utf8");
 
-      const sourceMp4 = path.join(root, "out", "thailand-ranking.mp4");
-      if (!fs.existsSync(sourceMp4))
-        throw new Error("Request failed");
+      const gappedWavPath = path.join(generatedDir, `${outputName}.gapped.wav`);
+
+      await insertAudioGaps({
+        input: wavPath,
+        output: gappedWavPath,
+        duration,
+        gap,
+        items,
+        run,
+        remotionCli,
+      });
+
+      const muxAudioPath = gappedWavPath;
+
+      const renderPropsPath = path.join(
+        generatedDir,
+        `${outputName}.props.json`,
+      );
+
+      const renderProps = {
+        project: {
+          title: String(body.title || ""),
+          subtitle: "",
+          unit: "",
+          locale: "th",
+          rankings: body.rankings,
+          introDuration: opening ? 0 : 0,
+          finalHoldDuration: 0,
+          audioSrc: "",
+          fps,
+        },
+      };
+
+      fs.writeFileSync(
+        renderPropsPath,
+        JSON.stringify(renderProps, null, 2),
+        "utf8",
+      );
+
+      const sourceMp4 = path.join(generatedDir, `${outputName}.video.mp4`);
+
+      await run(process.execPath, [
+        remotionCli,
+        "render",
+        path.join(root, "src", "index.ts"),
+        "ThailandProvinceRanking",
+        sourceMp4,
+        `--props=${renderPropsPath}`,
+        `--fps=${fps}`,
+      ]);
+
       await muxAudioIntoVideo({
         videoInput: sourceMp4,
-        audioInput: wavPath,
+        audioInput: gappedWavPath,
         output: mp4Path,
       });
 
@@ -350,14 +514,3 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => console.log(`Web UI: http://localhost:${port}`));
-
-
-
-
-
-
-
-
-
-
-
