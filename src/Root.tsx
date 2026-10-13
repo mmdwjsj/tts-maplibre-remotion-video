@@ -20,6 +20,8 @@ export const Root: React.FC = () => {
         const timeline = buildTimeline(project);
 
         return {
+          width: project.width ?? 1080,
+          height: project.height ?? 1920,
           fps: project.fps ?? 30,
           durationInFrames: timeline.totalFrames,
           props: {project},

@@ -1,4 +1,5 @@
-﻿import http from "node:http";
+﻿import "./tts/load-env.mjs";
+import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -48,6 +49,20 @@ const safeName = (value) =>
     .replace(/-+/g, "-")
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, 100) || "thailand-ranking";
+
+const DEFAULT_RESOLUTION = { width: 1080, height: 1920 };
+// H.264 requires even dimensions.
+const toEven = (value) => (value % 2 === 0 ? value : value + 1);
+const parseResolution = (value) => {
+  const match = /^(\d{3,4})\s*[x×]\s*(\d{3,4})$/.exec(String(value ?? "").trim());
+  if (!match) return DEFAULT_RESOLUTION;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (width < 240 || height < 240 || width > 4096 || height > 4096) {
+    return DEFAULT_RESOLUTION;
+  }
+  return { width: toEven(width), height: toEven(height) };
+};
 
 const run = (command, args, timeoutMs = 0) =>
   new Promise((resolve, reject) => {
@@ -232,6 +247,10 @@ const server = http.createServer(async (req, res) => {
       const output = await runPowerShell(
         path.join(root, "scripts", "tts-speakers.ps1"),
       );
+      // ConvertTo-Json emits a bare object when only one voice is installed.
+      const parsed = output ? JSON.parse(output) : [];
+      const voices = Array.isArray(parsed) ? parsed : [parsed];
+      json(res, 200, { engine: "sapi", voices });
     } catch (error) {
       json(res, 500, { error: error.message });
     }
@@ -355,6 +374,7 @@ const server = http.createServer(async (req, res) => {
       const sourceDuration = wavDuration(wavPath);
       const fps = Math.max(1, Number(body.fps) || 30);
       const gap = Math.max(0, Number(body.gap) || 0);
+      const { width, height } = parseResolution(body.resolution);
       const opening = String(body.opening || "").trim();
       const items = [
         ...(opening ? [{ type: "opening", text: opening }] : []),
@@ -389,11 +409,21 @@ const server = http.createServer(async (req, res) => {
         cursor += segmentDuration + (index < items.length - 1 ? gap : 0);
         return segment;
       });
+      const totalDuration = +(
+        sourceDuration +
+        gap * Math.max(0, items.length - 1)
+      ).toFixed(3);
+      const totalFrames = Math.ceil(
+        (sourceDuration + gap * Math.max(0, items.length - 1)) * fps,
+      );
+
       const timeline = {
         title: body.title,
         outputName,
         fps,
-        resolution: body.resolution,
+        width,
+        height,
+        resolution: `${width}x${height}`,
         ttsEngine: engineId,
         language: ttsRequest.language,
         voice: ttsRequest.voice,
@@ -403,13 +433,8 @@ const server = http.createServer(async (req, res) => {
         targetSpeechDuration: ttsRequest.targetSeconds,
         ttsModel: ttsRequest.model,
         gap,
-        totalDuration: +(
-          sourceDuration +
-          gap * Math.max(0, items.length - 1)
-        ).toFixed(3),
-        totalFrames: Math.ceil(
-          (sourceDuration + gap * Math.max(0, items.length - 1)) * fps,
-        ),
+        totalDuration,
+        totalFrames,
         segments,
       };
       fs.writeFileSync(timelinePath, JSON.stringify(timeline, null, 2), "utf8");
@@ -426,8 +451,6 @@ const server = http.createServer(async (req, res) => {
         remotionCli,
       });
 
-      const muxAudioPath = gappedWavPath;
-
       const renderPropsPath = path.join(
         generatedDir,
         `${outputName}.props.json`,
@@ -440,10 +463,23 @@ const server = http.createServer(async (req, res) => {
           unit: "",
           locale: "th",
           rankings: body.rankings,
-          introDuration: opening ? 0 : 0,
+          // The opening line is narrated, so it lives in audioSegments rather
+          // than being a silent intro card.
+          introDuration: 0,
           finalHoldDuration: 0,
           audioSrc: "",
           fps,
+          width,
+          height,
+          // Drives the video timeline from the real audio segments. Without
+          // this the render fell back to the default 3.2s per province and
+          // ffmpeg -shortest silently truncated the narration.
+          audioSegments: segments.map((segment) => ({
+            type: segment.type,
+            ...(segment.type === "ranking" ? { rank: segment.rank } : {}),
+            duration: segment.duration,
+            gapAfter: segment.gapAfter,
+          })),
         },
       };
 
@@ -463,6 +499,8 @@ const server = http.createServer(async (req, res) => {
         sourceMp4,
         `--props=${renderPropsPath}`,
         `--fps=${fps}`,
+        `--width=${width}`,
+        `--height=${height}`,
       ]);
 
       await muxAudioIntoVideo({
@@ -473,6 +511,10 @@ const server = http.createServer(async (req, res) => {
 
       json(res, 200, {
         duration,
+        totalDuration,
+        totalFrames,
+        resolution: `${width}x${height}`,
+        fps,
         files: {
           wav: `/out/generated/${outputName}.wav`,
           timeline: `/out/generated/${outputName}.timeline.json`,

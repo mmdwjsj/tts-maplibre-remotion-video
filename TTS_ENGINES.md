@@ -26,15 +26,19 @@ Content-Type: application/json
 
 The response may be WAV, MP3, or OGG. This project normalizes it to mono, 24 kHz, 16-bit PCM WAV before building the timeline and muxing the video.
 
-## PowerShell example
+## Configuration
+
+`npm run web` loads `.env.tts` (then `.env`) from the project root automatically — copy `.env.tts.example` and edit it. Real environment variables always win, so the PowerShell example below still works for one-off overrides.
 
 ```powershell
-$env:SAKTHAI_BASE_URL = 'http://127.0.0.1:8890'
+$env:SAKTHAI_BASE_URL = 'http://127.0.0.1:10004'
 $env:SAKTHAI_MODEL = 'sakthai'
 $env:SAKTHAI_VOICES = 'default'
 $env:TTS_TIMEOUT_MS = '120000'
 npm.cmd run web
 ```
+
+Every `*_BASE_URL` / `*_MODEL` / `*_VOICES` value must match `src/config/tts.config.json`, because a value present in the environment overrides the config file. A wrong port makes the engine show up as unavailable in the UI instead of falling back.
 
 See `.env.tts.example` for every supported variable. `*_SPEECH_PATH` can override `/v1/audio/speech`, and `*_API_KEY` adds a Bearer token.
 

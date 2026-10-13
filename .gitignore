@@ -5,3 +5,6 @@ public/audio/*.wav
 public/audio/*.mp3
 !public/audio/.gitkeep
 .npm-cache/
+.env
+.env.tts
+.env.local

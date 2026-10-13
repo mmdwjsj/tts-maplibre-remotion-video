@@ -16,17 +16,27 @@ export const normalizeTtsRequest = (value = {}) => {
   return { text, language, voice, model, speed, format, targetSeconds };
 };
 
+// Returns the first candidate that is a non-empty string, so blank request
+// fields fall through to the engine defaults instead of short-circuiting `??`.
+const pick = (...candidates) => {
+  for (const candidate of candidates) {
+    const text = candidate === undefined || candidate === null ? "" : String(candidate).trim();
+    if (text) return text;
+  }
+  return "";
+};
+
 export const normalizeUnifiedTtsRequest = (value = {}, defaults = {}) => {
   const legacy = normalizeTtsRequest(value);
   const controls = value.controls && typeof value.controls === "object"
     ? value.controls
     : { speed: legacy.speed };
   return {
-    engineId: String(value.engineId ?? value.ttsEngine ?? defaults.engineId ?? "").trim(),
-    modelId: String(value.modelId ?? legacy.model ?? defaults.modelId ?? "").trim(),
+    engineId: pick(value.engineId, value.ttsEngine, defaults.engineId),
+    modelId: pick(value.modelId, legacy.model, defaults.modelId),
     text: legacy.text,
-    language: String(value.language ?? defaults.language ?? legacy.language).trim() || "auto",
-    voiceId: String(value.voiceId ?? legacy.voice ?? defaults.voiceId ?? "").trim(),
+    language: pick(value.language, defaults.language, legacy.language) || "auto",
+    voiceId: pick(value.voiceId, legacy.voice, defaults.voiceId),
     controls,
     parameters: value.parameters && typeof value.parameters === "object" && !Array.isArray(value.parameters) ? value.parameters : {},
     output: {

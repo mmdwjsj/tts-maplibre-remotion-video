@@ -894,8 +894,13 @@
         $("#result").style.display = "block";
         $("#downloads").style.display = "flex";
 
+        const producedSeconds = Number(
+          result.totalDuration ?? result.duration,
+        );
+
         $("#resultMeta").textContent =
-          `${payload.title} · ${Number(result.duration).toFixed(2)} 秒 · ` +
+          `${payload.title} · ${producedSeconds.toFixed(2)} 秒 · ` +
+          `${result.resolution ? result.resolution + " · " : ""}` +
           payload.outputName;
 
         [
