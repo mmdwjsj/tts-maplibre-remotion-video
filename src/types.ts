@@ -1,4 +1,5 @@
 ﻿import type {FeatureCollection, Geometry} from 'geojson';
+import type {FramingOptions} from './framing/resolveViewport';
 
 export type RankingDatum = {
   rank: number;
@@ -37,6 +38,11 @@ export type ProjectData = {
   height?: number;
   /** When present, the video timeline follows the real audio timeline exactly. */
   audioSegments?: AudioSegment[];
+  /**
+   * Static map framing. Evaluated once per video from the complete ranking set,
+   * then held for every frame (see `src/framing/resolveViewport.ts`).
+   */
+  framing?: FramingOptions;
 };
 
 export type ProvinceProperties = {

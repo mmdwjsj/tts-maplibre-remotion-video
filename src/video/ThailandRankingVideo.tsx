@@ -2,7 +2,6 @@ import React, { useMemo } from "react";
 import {
   AbsoluteFill,
   Audio,
-  interpolate,
   spring,
   staticFile,
   useCurrentFrame,
@@ -13,12 +12,26 @@ import type { ProjectData, ThailandGeoJson } from "../types";
 import { buildTimeline } from "../timeline/buildTimeline";
 import { theme } from "../config/theme";
 import { ThailandMap } from "./components/ThailandMap";
+import { MAP_STAGE, resolveViewport } from "../framing/resolveViewport";
 
 // The layout is authored on a 1080x1920 portrait canvas and then uniformly
 // scaled, so square and landscape compositions stay proportional instead of
 // breaking the absolute positioning.
 const DESIGN_WIDTH = 1080;
 const DESIGN_HEIGHT = 1920;
+
+// The map is the bottom layer and fills the entire canvas — `MAP_STAGE` is the
+// container size in SVG user units, so the resolved viewport is always computed
+// against the real container. Header and footer float above it; these gradient
+// scrims keep their text readable. The header scrim stops short of the map
+// (`MAP_SAFE_INSET.top` keeps the map below the title anyway), so it never
+// darkens ranked provinces.
+const HEADER_SCRIM_HEIGHT = 300;
+const HEADER_SCRIM =
+  "linear-gradient(180deg, rgba(8,16,22,0.97) 0%, rgba(8,16,22,0.92) 30%, rgba(8,16,22,0.62) 62%, rgba(8,16,22,0) 100%)";
+const FOOTER_SCRIM_HEIGHT = 260;
+const FOOTER_SCRIM =
+  "linear-gradient(0deg, rgba(8,16,22,0.95) 0%, rgba(8,16,22,0.7) 45%, rgba(8,16,22,0) 100%)";
 
 export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   project,
@@ -37,8 +50,20 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
         .filter((provinceId): provinceId is string => Boolean(provinceId)),
     [activeIndex, timeline.segments],
   );
+  // Static camera: resolved once from the *complete* ranking set, before any
+  // frame is rendered, and reused for every frame. Nothing here depends on the
+  // currently revealed province, so the viewport cannot drift while playing.
+  const framing = useMemo(
+    () =>
+      resolveViewport(
+        geoData as ThailandGeoJson,
+        project.rankings.map((ranking) => ranking.provinceId),
+        project.framing,
+        MAP_STAGE,
+      ),
+    [project],
+  );
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 90 } });
-  const zoom = revealZoom(frame, activeSegment);
   const scale = Math.min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT);
 
   return (
@@ -69,6 +94,51 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           transformOrigin: "center center",
         }}
       >
+        {/* Bottom layer: the map, full-bleed. It is painted first so the title
+            header and the footer float above it instead of shrinking it. */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: MAP_STAGE.width,
+            height: MAP_STAGE.height,
+            overflow: "hidden",
+          }}
+        >
+          <ThailandMap
+            geojson={geoData as ThailandGeoJson}
+            project={project}
+            visibleIds={visibleIds}
+            active={activeSegment?.datum}
+            activeStart={activeSegment?.activeStart ?? 0}
+            framing={framing}
+          />
+        </div>
+        {/* Scrims that keep the header/footer text readable when a province or a
+            leader line runs underneath. */}
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            height: HEADER_SCRIM_HEIGHT,
+            background: HEADER_SCRIM,
+            pointerEvents: "none",
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: FOOTER_SCRIM_HEIGHT,
+            background: FOOTER_SCRIM,
+            pointerEvents: "none",
+          }}
+        />
         <div
           style={{
             position: "absolute",
@@ -107,25 +177,6 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             {project.subtitle}
           </div>
         </header>
-        <div
-          style={{
-            position: "absolute",
-            top: 285,
-            left: 0,
-            width: 1080,
-            height: 1510,
-            transform: `scale(${zoom})`,
-            transformOrigin: "50% 48%",
-          }}
-        >
-          <ThailandMap
-            geojson={geoData as ThailandGeoJson}
-            project={project}
-            visibleIds={visibleIds}
-            active={activeSegment?.datum}
-            activeStart={activeSegment?.activeStart ?? 0}
-          />
-        </div>
         <footer
           style={{
             position: "absolute",
@@ -147,27 +198,6 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
       </div>
       {project.audioSrc ? <Audio src={staticFile(project.audioSrc)} /> : null}
     </AbsoluteFill>
-  );
-};
-
-/**
- * Slow push-in while a province is being revealed, then hold the gentle zoom
- * through the trailing silence so the highlight does not pop back to 1.
- */
-const revealZoom = (
-  frame: number,
-  segment?: ReturnType<typeof buildTimeline>["segments"][number],
-) => {
-  if (!segment || segment.activeEnd - segment.activeStart < 2) return 1;
-  return interpolate(
-    frame,
-    [
-      segment.activeStart,
-      Math.min(segment.activeStart + 18, segment.activeEnd - 1),
-      segment.activeEnd,
-    ],
-    [1, 1.025, 1.008],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
   );
 };
 

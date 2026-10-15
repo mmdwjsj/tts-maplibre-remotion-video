@@ -130,6 +130,72 @@
       gap: 0 10px;
     }
 
+    /* id ↔ 名称不一致的数据校验提示：行内描边 + 汇总面板 + 一键修正 */
+    .data-warnings {
+      display: none;
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px solid #7a3b2e;
+      border-radius: 8px;
+      background: rgba(122, 59, 46, 0.16);
+      font-size: 13px;
+      line-height: 1.75;
+      color: #ffd9c7;
+    }
+
+    .data-warnings.show {
+      display: block;
+    }
+
+    .data-warn-title {
+      margin-bottom: 6px;
+      font-weight: 700;
+      color: #ffb99f;
+    }
+
+    .data-warn-row strong {
+      color: #ff9d7a;
+    }
+
+    .data-warn-row + .data-warn-row {
+      margin-top: 4px;
+    }
+
+    button.fix {
+      margin-left: 8px;
+      padding: 2px 9px;
+      font-size: 12px;
+      color: #0b1d22;
+      background: #ffb99f;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    td input.bad,
+    td select.bad {
+      border-color: #c2603f;
+      box-shadow: 0 0 0 1px rgba(194, 96, 63, 0.45);
+    }
+
+    /* 输入的名称找不到对应府：琥珀色提示，不阻断输入 */
+    td input.warn {
+      border-color: #b98a2e;
+      box-shadow: 0 0 0 1px rgba(185, 138, 46, 0.4);
+    }
+
+    td select.province-id {
+      min-width: 190px;
+      padding: 6px;
+    }
+
+    .link-hint {
+      margin: 0 0 10px;
+      color: #7fa4a3;
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
     .table-wrap {
       max-height: 480px;
       overflow: auto;
@@ -172,22 +238,89 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 430px;
+      min-height: 560px;
       background: radial-gradient(circle, #123a3b, #09191f 65%);
       border: 1px dashed #2a5b60;
       border-radius: 10px;
     }
 
+    /* The full portrait canvas: the map is drawn full-bleed inside it. */
     .map {
-      width: 65%;
-      height: 75%;
-      filter: drop-shadow(0 0 14px #3be2c4);
+      width: auto;
+      height: 88%;
+      max-height: 520px;
+      aspect-ratio: 1080 / 1920;
     }
 
     .map path {
-      fill: #2a8a7d;
-      stroke: #a2fff0;
+      fill: #16333a;
+      stroke: #2f5a60;
       stroke-width: 1.2;
+    }
+
+    /* A ranking province that made it into the frame. */
+    .map path.lit {
+      fill: #2bc7b1;
+      stroke: #a2fff0;
+      stroke-width: 1.5;
+    }
+
+    /* A ranking province framed out on purpose: still drawn, never dropped. */
+    .map path.off {
+      fill: #1d4a4c;
+      stroke: #6ee7d8;
+      stroke-dasharray: 6 5;
+      stroke-opacity: 0.75;
+    }
+
+    /* The framing window (safe area) the auto-framing fits the data into. */
+    .map rect.frame {
+      fill: none;
+      stroke: #6ee7d8;
+      stroke-width: 2;
+      stroke-dasharray: 12 9;
+      opacity: 0.5;
+    }
+
+    /* Title / footer bands, darkened exactly like the render scrims: the map
+       runs behind them, the floating label does not. */
+    .map rect.band {
+      fill: rgba(8, 16, 22, 0.72);
+    }
+
+    .map rect.label-band {
+      fill: none;
+      stroke: rgba(110, 231, 216, 0.32);
+      stroke-width: 2;
+      stroke-dasharray: 4 10;
+    }
+
+    .map text.band-label {
+      fill: #7ca5a4;
+      font-size: 26px;
+      letter-spacing: 2px;
+    }
+
+    .framing-info {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #9dc2c0;
+    }
+
+    .framing-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 5px 10px;
+    }
+
+    .framing-grid .k {
+      color: #6f9b99;
+    }
+
+    .framing-warnings {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: #ffd18a;
     }
 
     .preview-title {
@@ -310,6 +443,16 @@
         <button id="sample" type="button">加载示例</button>
       </div>
 
+      <datalist id="provinceEnOptions"></datalist>
+      <datalist id="provinceThOptions"></datalist>
+
+      <p class="link-hint">
+        三列互通：选择府 ID 会自动带出英文名与泰文名；输入或选择泰文名（或英文名）
+        会自动回填府 ID 与另一列。候选来自 77 府边界数据，不用手打。
+      </p>
+
+      <div id="dataWarnings" class="data-warnings"></div>
+
       <div class="table-wrap">
         <table>
           <thead>
@@ -328,7 +471,7 @@
     </section>
 
     <section class="card">
-      <h2>2 / 视频预览</h2>
+      <h2>2 / 地图取景预览</h2>
 
       <div class="preview">
         <div id="previewTitle" class="preview-title">
@@ -336,18 +479,18 @@
         </div>
 
         <svg
+          id="previewMap"
           class="map"
-          viewBox="0 0 300 480"
+          viewBox="0 0 1080 1920"
+          preserveAspectRatio="xMidYMid meet"
           role="img"
-          aria-label="泰国地图示意图"
-        >
-          <path
-            d="M115 12 170 30 183 74 166 105 192 145 173 190 194 234 170 275 181 316 150 363 145 423 112 468 92 418 101 365 78 320 94 273 75 226 103 182 84 137 99 96 86 53Z"
-          />
-        </svg>
+          aria-label="地图取景预览"
+        ></svg>
 
-        <div class="preview-note">排名府将在视频中依次高亮</div>
+        <div id="previewNote" class="preview-note">正在计算取景…</div>
       </div>
+
+      <div id="framingInfo" class="framing-info"></div>
     </section>
 
     <section class="card">
@@ -443,6 +586,73 @@
     
 
     <section class="card wide">
+      <h2>4 / 地图取景（生成前一次性计算，全片固定镜头）</h2>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="fitMode">取景模式 fitMode</label>
+          <select id="fitMode">
+            <option value="data-driven">data-driven 数据自动取景（默认）</option>
+            <option value="full-country">full-country 完整国家地图</option>
+            <option value="manual">manual 手动指定中心与缩放</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="framingPreset">取景松紧 framingPreset</label>
+          <select id="framingPreset">
+            <option value="tight">tight 尽量放大重点区域</option>
+            <option value="balanced" selected>balanced 平衡（默认）</option>
+            <option value="wide">wide 展示更广地理范围</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="coverageThreshold">覆盖阈值 coverageThreshold</label>
+          <input
+            id="coverageThreshold"
+            type="number"
+            min="0.25"
+            max="1"
+            step="0.05"
+            value="0.9"
+          />
+        </div>
+
+        <div class="field">
+          <label for="strictCoverage">严格覆盖 strictCoverage</label>
+          <select id="strictCoverage">
+            <option value="false">关闭</option>
+            <option value="true">开启（覆盖不足时告警）</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="manualFraming" class="field-grid" style="display: none">
+        <div class="field">
+          <label for="manualLon">中心经度</label>
+          <input id="manualLon" type="number" step="0.001" value="100.5" />
+        </div>
+
+        <div class="field">
+          <label for="manualLat">中心纬度</label>
+          <input id="manualLat" type="number" step="0.001" value="13.5" />
+        </div>
+
+        <div class="field">
+          <label for="manualZoom">zoom</label>
+          <input id="manualZoom" type="number" step="0.1" value="8" />
+        </div>
+      </div>
+
+      <p class="hint">
+        覆盖阈值按“排名区域数量”计算（一个排名项 = 一份权重，避免大府主导取景）。
+        自动取景会优先保证该比例的排名区域进入画面，离群区域允许落在画面之外，
+        但排名、解说与数据都不会被删除。
+      </p>
+    </section>
+
+    <section class="card wide">
       <div class="action-row">
         <button id="generate" class="primary" type="button">
           生成音频与视频
@@ -468,7 +678,7 @@
     </section>
 
     <section class="card wide">
-      <h2>4 / 将要生成的完整音频文案</h2>
+      <h2>5 / 将要生成的完整音频文案</h2>
 
       <textarea id="script" rows="10"></textarea>
 
@@ -536,6 +746,206 @@
         ranking.value,
       ).toLocaleString()}`;
 
+    /* ------------------------------------------------------------------ *
+     * Map framing (preview + configuration)
+     * ------------------------------------------------------------------ */
+
+    let previewVersion = 0;
+    let previewTimer = null;
+    let provinceNames = {};
+    /**
+     * The 77-province roster (`{id, en, th, enKey, thKey}`) that arrives with the
+     * framing preview. It is the only source for the 府 ID picker and for the
+     * name candidates, so all three columns always describe the same province.
+     */
+    let provinceRows = [];
+    /** `id → province`, for the O(1) lookup behind the 府 ID select. */
+    let provinceById = new Map();
+    let provinceTableLoaded = false;
+    /** Latest id↔name audit from the server; drives the row marks and the panel. */
+    let provinceAudit = null;
+    /** `{index, input}` of every 府 ID cell, so hints refresh without a rebuild. */
+    let rowIdInputs = [];
+    /** Per-row `{id, en, th}` controls, so one column can fill the other two. */
+    let rowControls = [];
+
+    /** Reads the framing controls into the request payload. */
+    const framingState = () => {
+      const framing = {
+        fitMode: $("#fitMode").value,
+        framingPreset: $("#framingPreset").value,
+        coverageThreshold: Number($("#coverageThreshold").value),
+        strictCoverage: $("#strictCoverage").value === "true",
+      };
+
+      if (framing.fitMode === "manual") {
+        framing.manualCenter = [
+          Number($("#manualLon").value),
+          Number($("#manualLat").value),
+        ];
+        framing.manualZoom = Number($("#manualZoom").value);
+      }
+
+      return framing;
+    };
+
+    const framingModeLabel = (mode) =>
+      ({
+        "data-driven": "数据自动取景",
+        "full-country": "完整国家地图",
+        manual: "手动取景",
+      })[mode] || mode;
+
+    const renderFramingInfo = (viewport) => {
+      const rows = [
+        [
+          "取景模式",
+          `${framingModeLabel(viewport.mode)}${
+            viewport.requestedMode !== viewport.mode
+              ? `（请求 ${viewport.requestedMode}）`
+              : ""
+          }`,
+        ],
+        ["松紧程度", viewport.preset],
+        [
+          "覆盖排名区域",
+          `${viewport.coveredCount}/${viewport.totalCount}（${Math.round(
+            viewport.coverage * 100,
+          )}%，目标 ${viewport.coverageThreshold}）`,
+        ],
+        [
+          "中心 / zoom",
+          `纬 ${viewport.center[1].toFixed(3)}, 经 ${viewport.center[0].toFixed(
+            3,
+          )} · zoom ${viewport.zoom.toFixed(2)}`,
+        ],
+        [
+          "相对全图放大",
+          `${Math.pow(2, viewport.zoom - viewport.referenceZoom).toFixed(2)} 倍`,
+        ],
+        [
+          "画面外区域",
+          viewport.droppedIds.length
+            ? describeIds(viewport.droppedIds)
+            : "无（全部排名区域在画面内）",
+        ],
+        [
+          "未匹配 GeoJSON",
+          viewport.missingIds.length ? describeIds(viewport.missingIds) : "无",
+        ],
+      ];
+
+      const warnings = (viewport.warnings || [])
+        .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+        .join("");
+
+      return (
+        `<div class="framing-grid">` +
+        rows
+          .map(
+            ([key, value]) =>
+              `<span class="k">${escapeHtml(key)}</span><span class="v">${escapeHtml(
+                value,
+              )}</span>`,
+          )
+          .join("") +
+        `</div>` +
+        (warnings ? `<ul class="framing-warnings">${warnings}</ul>` : "")
+      );
+    };
+
+    /** `TH-96 Narathiwat` — ids stay the stable key, names are for reading. */
+    const describeIds = (ids) =>
+      ids.map((id) => `${id}${provinceNames[id] ? ` ${provinceNames[id]}` : ""}`).join("、");
+
+    const drawFramingPreview = ({ viewport, paths, provinces, audit }) => {
+      provinceNames = Object.fromEntries(
+        paths.map((item) => [item.id, item.name || ""]),
+      );
+
+      // The province roster and the id↔name audit ride along with the preview, so
+      // the UI always checks the same data the server will render.
+      provinceAudit = audit ?? null;
+      loadProvinceTable(provinces);
+      renderAuditHints();
+
+      const kept = new Set(viewport.keptIds);
+      const dropped = new Set(viewport.droppedIds);
+      const shapes = paths
+        .map(({ id, d }) => {
+          const className = kept.has(id)
+            ? "province lit"
+            : dropped.has(id)
+              ? "province off"
+              : "province";
+          return `<path class="${className}" d="${d}"></path>`;
+        })
+        .join("");
+
+      const { x0, y0, x1, y1 } = viewport.rect;
+      const { width, height } = viewport.stage;
+      const band = viewport.labelRect;
+      const map = $("#previewMap");
+      map.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      // Draw order mirrors the render: provinces, then the title/footer bands
+      // (the map starts below the title band and runs behind the footer band),
+      // then the framing window and the label-safe band.
+      map.innerHTML =
+        shapes +
+        `<rect class="band" x="0" y="0" width="${width}" height="${band.y0}"></rect>` +
+        `<rect class="band" x="0" y="${band.y1}" width="${width}" height="${
+          height - band.y1
+        }"></rect>` +
+        `<rect class="label-band" x="${band.x0}" y="${band.y0}" width="${
+          band.x1 - band.x0
+        }" height="${band.y1 - band.y0}"></rect>` +
+        `<rect class="frame" x="${x0}" y="${y0}" width="${x1 - x0}" height="${
+          y1 - y0
+        }"></rect>` +
+        `<text class="band-label" x="28" y="${band.y0 - 16}">标题区（地图从这条线以下开始）</text>` +
+        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图垫在其后）</text>`;
+
+      $("#previewNote").textContent =
+        `固定镜头 · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
+        `${viewport.zoom.toFixed(2)}；地图铺满整幅画布并避开标题区，暗色为标题/页脚遮盖带，` +
+        `虚线为取景框，点线为浮动标签安全区`;
+      $("#framingInfo").innerHTML = renderFramingInfo(viewport);
+    };
+
+    async function refreshFramingPreview() {
+      const version = ++previewVersion;
+
+      try {
+        const response = await fetch("/api/framing/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=UTF-8" },
+          body: JSON.stringify({ rankings: data, framing: framingState() }),
+        });
+
+        const payload = await readJson(response);
+        if (!response.ok) throw new Error(errorMessage(payload, "取景计算失败"));
+        if (version !== previewVersion) return;
+
+        drawFramingPreview(payload);
+      } catch (error) {
+        if (version !== previewVersion) return;
+
+        $("#previewNote").textContent = `取景预览不可用：${error.message}`;
+        $("#framingInfo").innerHTML = "";
+      }
+    }
+
+    /** Debounced so typing in the coverage/zoom fields stays smooth. */
+    const scheduleFramingPreview = () => {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(refreshFramingPreview, 200);
+    };
+
+    const syncManualFramingVisibility = () => {
+      $("#manualFraming").style.display =
+        $("#fitMode").value === "manual" ? "grid" : "none";
+    };
+
     const buildScript = () =>
       [
         $("#opening").value.trim(),
@@ -551,36 +961,248 @@
       $("#script").value = buildScript();
     };
 
+    /* ------------------------------------------------------------------ *
+     * 府 ID ↔ 英文名 ↔ 泰文名：任意一列都能补齐另外两列
+     * ------------------------------------------------------------------ */
+
+    const provinceLabel = (province) =>
+      [province.id, province.en, province.th].filter(Boolean).join(" · ");
+
+    const setHint = (control, message) => {
+      if (!control) return;
+      control.classList.toggle("warn", Boolean(message));
+      control.title = message || "";
+    };
+
+    /**
+     * Writes one province into a row — the data model *and* the three live
+     * controls — so 府 ID / 英文名 / 泰文名 can never drift apart.
+     *
+     * `source` is the column the user just touched. When it is `live` (still
+     * typing) that column is left alone, otherwise the caret would fight the
+     * user; on blur/change every column is normalised to the canonical spelling.
+     */
+    const applyProvince = (index, province, {live = false, source} = {}) => {
+      const ranking = data[index];
+      if (!ranking || !province) return false;
+
+      ranking.provinceId = province.id;
+      ranking.provinceEn = province.en;
+      ranking.provinceTh = province.th;
+
+      const controls = rowControls[index] ?? {};
+      [
+        ["provinceId", province.id],
+        ["provinceEn", province.en],
+        ["provinceTh", province.th],
+      ].forEach(([key, value]) => {
+        const control = controls[key];
+        if (!control || (live && key === source)) return;
+        if (control.value !== value) control.value = value;
+        setHint(control, "");
+      });
+
+      refreshScript();
+      scheduleFramingPreview();
+      return true;
+    };
+
+    /**
+     * Canonical matches only (the datalist hands back exactly these strings), so
+     * the browser never needs the server's normalisation rules for the common
+     * path. Anything else goes to `/api/provinces/resolve`.
+     */
+    const matchCanonical = (source, raw) => {
+      const value = String(raw ?? "").trim();
+      if (!value) return null;
+      if (source === "provinceId") {
+        return provinceById.get(value.toUpperCase()) ?? null;
+      }
+      const field = source === "provinceEn" ? "en" : "th";
+      return provinceRows.find((province) => province[field] === value) ?? null;    };
+
+    const lookupProvince = async (value) => {
+      const response = await fetch("/api/provinces/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=UTF-8" },
+        body: JSON.stringify({ value }),
+      });
+
+      const payload = await readJson(response);
+      if (!response.ok) throw new Error(errorMessage(payload, "府名解析失败"));
+      return payload;
+    };
+
+    /**
+     * Resolves the column the user just edited into a full province triple.
+     * `live` runs on every keystroke: it only fires when the text already *is*
+     * a complete province name, so typing never gets hijacked halfway.
+     */
+    const resolveEditedColumn = async (index, source, {live = false} = {}) => {
+      const control = rowControls[index]?.[source];
+      const raw = String(control?.value ?? "").trim();
+
+      if (!raw) {
+        setHint(control, "");
+        return;
+      }
+
+      const canonical = matchCanonical(source, raw);
+      if (canonical) {
+        applyProvince(index, canonical, {live, source});
+        return;
+      }
+
+      // Mid-typing an incomplete name is not an error yet.
+      if (live) return;
+
+      try {
+        const { matches } = await lookupProvince(raw);
+
+        if (matches.length === 1) {
+          applyProvince(index, matches[0], {source});
+          return;
+        }
+
+        setHint(
+          control,
+          matches.length
+            ? `「${raw}」可以指 ${matches
+                .map((province) => province.id)
+                .join("、")}，请从下拉候选里选，或直接改府 ID`
+            : `没有找到「${raw}」对应的府，请从下拉候选里选，或直接改府 ID`,
+        );
+      } catch (error) {
+        setHint(control, `府名核对失败：${error.message}`);
+      }
+    };
+
+    /** 府 ID：有府列表时是真选择器，没有时退回手输（不阻断录入）。 */
+    const buildProvinceIdControl = (ranking, index, controls) => {
+      const current = String(ranking.provinceId ?? "").trim().toUpperCase();
+
+      if (!provinceRows.length) {
+        const input = document.createElement("input");
+        input.value = ranking.provinceId ?? "";
+        input.placeholder = "TH-10（府列表加载中…）";
+        input.setAttribute("autocomplete", "off");
+        input.addEventListener("input", (event) => {
+          ranking.provinceId = event.target.value;
+          resolveEditedColumn(index, "provinceId", {live: true});
+          refreshScript();
+        });
+        input.addEventListener("change", (event) => {
+          ranking.provinceId = event.target.value;
+          resolveEditedColumn(index, "provinceId");
+        });
+        controls.provinceId = input;
+        return input;
+      }
+
+      const select = document.createElement("select");
+      select.className = "province-id";
+      select.innerHTML =
+        '<option value="">请选择府 ID</option>' +
+        provinceRows
+          .map(
+            (province) =>
+              `<option value="${escapeHtml(province.id)}">${escapeHtml(
+                provinceLabel(province),
+              )}</option>`,
+          )
+          .join("");
+
+      // An id that is not in the boundary data must stay visible (and stay
+      // selectable) instead of being silently reset to the placeholder.
+      if (current && !provinceById.has(current)) {
+        select.insertAdjacentHTML(
+          "beforeend",
+          `<option value="${escapeHtml(current)}">${escapeHtml(
+            current,
+          )}（边界数据里没有这个 id）</option>`,
+        );
+      }
+
+      select.value = current;
+      select.addEventListener("change", () => {
+        const province = provinceById.get(select.value);
+        ranking.provinceId = select.value;
+        if (province) {
+          applyProvince(index, province, {source: "provinceId"});
+        } else {
+          setHint(select, "");
+          refreshScript();
+          scheduleFramingPreview();
+        }
+      });
+      controls.provinceId = select;
+      return select;
+    };
+
+    /** 英文名 / 泰文名：可输可选，选中即反查并补齐另外两列。 */
+    const buildProvinceNameControl = (ranking, index, key, controls) => {
+      const input = document.createElement("input");
+      input.value = ranking[key] ?? "";
+      input.placeholder = key === "provinceEn" ? "Chiang Mai" : "เชียงใหม่";
+      input.setAttribute(
+        "list",
+        key === "provinceEn" ? "provinceEnOptions" : "provinceThOptions",
+      );
+      input.setAttribute("autocomplete", "off");
+
+      input.addEventListener("input", (event) => {
+        ranking[key] = event.target.value;
+        resolveEditedColumn(index, key, {live: true});
+        refreshScript();
+      });
+      input.addEventListener("change", (event) => {
+        ranking[key] = event.target.value;
+        resolveEditedColumn(index, key);
+      });
+
+      controls[key] = input;
+      return input;
+    };
+
     function render() {
       rows.innerHTML = "";
+      rowIdInputs = [];
+      rowControls = [];
 
       data.forEach((ranking, index) => {
         const tr = document.createElement("tr");
+        const controls = (rowControls[index] = {});
 
-        ["rank", "provinceId", "provinceEn", "provinceTh", "value"].forEach(
-          (key) => {
-            const td = document.createElement("td");
-            const input = document.createElement("input");
+        const numberCell = (key) => {
+          const td = document.createElement("td");
+          const input = document.createElement("input");
+          input.type = "number";
+          input.value = ranking[key] ?? "";
+          input.addEventListener("input", (event) => {
+            ranking[key] = Number(event.target.value);
+            refreshScript();
+          });
+          td.append(input);
+          return td;
+        };
 
-            input.value = ranking[key] ?? "";
+        tr.append(numberCell("rank"));
 
-            if (key === "rank" || key === "value") {
-              input.type = "number";
-            }
+        // Ids come from the real boundary data: a typo here silently highlights
+        // a different province, with no other symptom.
+        const idCell = document.createElement("td");
+        const idControl = buildProvinceIdControl(ranking, index, controls);
+        idCell.append(idControl);
+        rowIdInputs.push({ index, input: idControl });
+        tr.append(idCell);
 
-            input.addEventListener("input", (event) => {
-              ranking[key] =
-                key === "rank" || key === "value"
-                  ? Number(event.target.value)
-                  : event.target.value;
+        ["provinceEn", "provinceTh"].forEach((key) => {
+          const td = document.createElement("td");
+          td.append(buildProvinceNameControl(ranking, index, key, controls));
+          tr.append(td);
+        });
 
-              refreshScript();
-            });
-
-            td.append(input);
-            tr.append(td);
-          },
-        );
+        tr.append(numberCell("value"));
 
         const actionCell = document.createElement("td");
         const removeButton = document.createElement("button");
@@ -599,7 +1221,148 @@
         tr.append(actionCell);
         rows.append(tr);
       });
+
+      renderAuditHints();
+
+      // Any ranking edit changes the framing, so refresh the preview (debounced).
+      scheduleFramingPreview();
     }
+
+    /**
+     * Loads the province roster (id + 英文名 + 泰文名) that rides along with the
+     * framing preview: it feeds both name datalists, and flips the 府 ID column
+     * from free text to a real picker.
+     */
+    const loadProvinceTable = (provinces) => {
+      if (provinceTableLoaded || !Array.isArray(provinces) || !provinces.length) {
+        return;
+      }
+      provinceTableLoaded = true;
+      provinceRows = provinces.map((item) => ({
+        id: String(item.id),
+        en: String(item.en ?? item.name ?? ""),
+        th: String(item.th ?? ""),
+      }));
+      provinceById = new Map(provinceRows.map((province) => [province.id, province]));
+
+      const option = (value, label) =>
+        `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+      $("#provinceEnOptions").innerHTML = provinceRows
+        .filter((province) => province.en)
+        .map((province) => option(province.en, provinceLabel(province)))
+        .join("");
+      $("#provinceThOptions").innerHTML = provinceRows
+        .filter((province) => province.th)
+        .map((province) => option(province.th, provinceLabel(province)))
+        .join("");
+
+      // One re-render swaps the placeholder inputs for real 府 ID selects.
+      render();
+    };
+
+    /**
+     * The map highlights on `provinceId`, so a row whose name disagrees with its
+     * id renders the wrong shape while the label reads the right name. Mark those
+     * id cells and list the problems with a one-click fix.
+     */
+    const renderAuditHints = () => {
+      const byId = new Map(
+        (provinceAudit?.mismatched ?? []).map((item) => [
+          String(item.provinceId).toUpperCase(),
+          item,
+        ]),
+      );
+
+      rowIdInputs.forEach(({ index, input }) => {
+        const item = byId.get(
+          String(data[index]?.provinceId ?? "")
+            .trim()
+            .toUpperCase(),
+        );
+        input.classList.toggle("bad", Boolean(item));
+        input.title = item
+          ? `${item.provinceId} 实际是 ${item.geoName}，与名称 ${item.givenName} 不符` +
+            (item.suggestedIds.length
+              ? `；应为 ${item.suggestedIds.join(" 或 ")}`
+              : "")
+          : "";
+      });
+
+      const host = $("#dataWarnings");
+      const mismatched = provinceAudit?.mismatched ?? [];
+      const unknownIds = provinceAudit?.unknownIds ?? [];
+      const duplicateIds = [...new Set(provinceAudit?.duplicateIds ?? [])];
+
+      if (!mismatched.length && !unknownIds.length && !duplicateIds.length) {
+        host.classList.remove("show");
+        host.innerHTML = "";
+        return;
+      }
+
+      host.classList.add("show");
+      host.innerHTML =
+        `<div class="data-warn-title">数据校验：${
+          mismatched.length + unknownIds.length + duplicateIds.length
+        } 处问题</div>` +
+        mismatched
+          .map(
+            (item) =>
+              `<div class="data-warn-row"><strong>${escapeHtml(item.provinceId)}</strong> 实际是「${escapeHtml(
+                item.geoName,
+              )}」，但这一行填的是「${escapeHtml(item.givenName)}」—— 地图会按 id 高亮 ${escapeHtml(
+                item.geoName,
+              )}。` +
+              item.suggestedIds
+                .map(
+                  (id) =>
+                    `<button type="button" class="fix" data-from="${escapeHtml(
+                      item.provinceId,
+                    )}" data-to="${escapeHtml(id)}">改为 ${escapeHtml(id)}</button>`,
+                )
+                .join("") +
+              `</div>`,
+          )
+          .join("") +
+        (unknownIds.length
+          ? `<div class="data-warn-row">这些 id 在行政区域数据里不存在，地图不会高亮：${escapeHtml(
+              unknownIds.join("、"),
+            )}</div>`
+          : "") +
+        (duplicateIds.length
+          ? `<div class="data-warn-row">重复 id（只按第一条处理）：${escapeHtml(
+              duplicateIds.join("、"),
+            )}</div>`
+          : "");
+    };
+
+    // One-click fix: the name is what the user meant, the id is what the map
+    // reads — so correcting the id is the safe direction.
+    $("#dataWarnings").addEventListener("click", (event) => {
+      const button = event.target.closest("button.fix");
+      if (!button) return;
+
+      const from = String(button.dataset.from ?? "")
+        .trim()
+        .toUpperCase();
+      const to = button.dataset.to;
+      let changed = 0;
+
+      data.forEach((ranking) => {
+        if (
+          String(ranking.provinceId ?? "")
+            .trim()
+            .toUpperCase() === from
+        ) {
+          ranking.provinceId = to;
+          changed += 1;
+        }
+      });
+
+      if (!changed) return;
+
+      render();
+      refreshScript();
+    });
 
     function setStatus(text, progress) {
       $("#status").textContent = text;
@@ -758,6 +1521,25 @@
     $("#ttsModel").addEventListener("change", loadModelCapabilities);
     $("#ttsLanguage").addEventListener("change", () => loadEngineVoices(++requestVersion));
 
+    // Framing controls: recompute the preview (debounced) on every change.
+    [
+      "#fitMode",
+      "#framingPreset",
+      "#coverageThreshold",
+      "#strictCoverage",
+      "#manualLon",
+      "#manualLat",
+      "#manualZoom",
+    ].forEach((selector) => {
+      const element = $(selector);
+      ["change", "input"].forEach((eventName) => {
+        element.addEventListener(eventName, () => {
+          syncManualFramingVisibility();
+          scheduleFramingPreview();
+        });
+      });
+    });
+
     $("#title").addEventListener("input", (event) => {
       $("#previewTitle").textContent = event.target.value;
     });
@@ -770,10 +1552,12 @@
     $("#refreshScript").addEventListener("click", refreshScript);
 
     $("#add").addEventListener("click", () => {
+      // Empty triple on purpose: picking the 府 ID fills the two names, which is
+      // the only way to be sure all three columns describe one province.
       data.push({
         rank: data.length + 1,
-        provinceId: "TH-",
-        provinceEn: "Province",
+        provinceId: "",
+        provinceEn: "",
         provinceTh: "",
         value: 0,
       });
@@ -871,6 +1655,7 @@
           gap: Number($("#gap").value),
           fps: Number($("#fps").value),
           resolution: $("#resolution").value,
+          framing: framingState(),
           rankings: data,
         };
 
@@ -898,10 +1683,21 @@
           result.totalDuration ?? result.duration,
         );
 
+        const framing = result.framing;
+        const framingNote = framing
+          ? ` · 取景 ${framingModeLabel(framing.mode)}/${framing.preset} · 覆盖 ${
+              framing.coveredCount
+            }/${framing.totalCount}` +
+            (framing.droppedIds.length
+              ? ` · 画面外 ${describeIds(framing.droppedIds)}`
+              : "")
+          : "";
+
         $("#resultMeta").textContent =
           `${payload.title} · ${producedSeconds.toFixed(2)} 秒 · ` +
           `${result.resolution ? result.resolution + " · " : ""}` +
-          payload.outputName;
+          payload.outputName +
+          framingNote;
 
         [
           ["#wavDownload", "wav"],
@@ -919,6 +1715,7 @@
       }
     });
 
+    syncManualFramingVisibility();
     render();
     refreshScript();
     loadEngineCatalog();

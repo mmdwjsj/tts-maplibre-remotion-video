@@ -10,7 +10,10 @@
     "still": "remotion still src/index.ts ThailandProvinceRanking out/preview.png --frame=210",
     "typecheck": "tsc --noEmit",
     "test:tts": "node --test scripts/tts/architecture.test.mjs",
-    "validate:data": "node scripts/validate-data.mjs"
+    "test:framing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/framing/viewport.test.mjs",
+    "test:data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/data/province-audit.test.mjs",
+    "data:thai-names": "node scripts/data/fill-thai-names.mjs",
+    "validate:data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-data.mjs"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",

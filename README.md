@@ -1,6 +1,6 @@
 # Thailand Province Ranking Video
 
-数据驱动的泰国府级排名动画，默认输出竖屏 1080×1920 / 30fps（可选横屏、方形）。当前 MVP 已实现 77 府底图、Top N 倒序揭晓、一次点亮后保持、信息标签、轻微镜头缩放、JSON/Excel 解析器，以及按旁白片段真实时长驱动的时间轴——画面与旁白严格对齐。
+数据驱动的泰国府级排名动画，默认输出竖屏 1080×1920 / 30fps（可选横屏、方形）。当前 MVP 已实现 77 府底图、Top N 倒序揭晓、一次点亮后保持、信息标签、数据驱动的固定地图取景、JSON/Excel 解析器，以及按旁白片段真实时长驱动的时间轴——画面与旁白严格对齐。
 
 ## 启动
 
@@ -17,15 +17,53 @@ Windows PowerShell 若禁用了 `npm.ps1`，使用 `npm.cmd run dev`。
 
 排名记录必须包含稳定的 `provinceId`（TIS-1099 / ISO 风格，例如 `TH-10`），避免用府名做脆弱关联。字段：`rank, provinceId, provinceEn, provinceTh, value`；可选 `valueLabel, narrationDuration`。`narrationDuration` 是对应泰语旁白片段的实际秒数，时间轴不会写死每府时长。
 
+**id 与名称必须指向同一个府**。地图只按 `provinceId` 高亮，标签文字用的是你填的 `provinceEn` / `provinceTh`：如果一行写的是「Narathiwat」却填了 `TH-45`（那其实是东北的黎逸府 Roi Et），成片就会在黎逸府点亮、标签写着那拉提瓦——看起来像地图错了，其实是 id 错了。所以生成前会做一次一致性校验（`src/data/provinceAudit.ts`）：名称归一化后与边界数据比对（空格/连字符/`Province` 后缀/常见别名都能对上），不一致时**反查并给出正确 id**，同时写进生成日志、HTTP 响应、`timeline.json`，Web 界面还会把出错的行标红并给一键修正。
+
+- 查 id 用 [`PROVINCE_IDS.md`](./PROVINCE_IDS.md)（含英文名与泰文名三列对照）。
+- Web 界面的三列是互通的：**选「府 ID」自动带出英文名与泰文名；输入或选择「泰文名」（或「英文名」）自动回填府 ID 与另一列**。候选来自边界数据，模糊输入由 `POST /api/provinces/resolve` 用 `lookupProvince()` 解析（能认 `TH-96` / `th96` / `96` / `Narathiwat` / `นราธิวาส` / `จังหวัดนราธิวาส` / `Ayutthaya` 这类写法），匹配到多个候选时不会瞎猜，而是提示改用府 ID。
+- 命令行校验：`npm run validate:data`（默认只警告）；`npm run validate:data -- --strict-naming` 存在不一致时以非零码退出。
+- 生成接口传 `"strictNaming": true` 时，存在不一致会直接返回 400 而不再渲染。
+- 泰文名存放在边界数据的 `provinceTh` 字段（77 府全覆盖），由 `npm run data:thai-names` 写入；该脚本只改 `provinceTh`，不动几何数据，可重复执行。
+
 JSON 示例位于 `public/data/rankings.json`。Excel 使用相同列名，可通过 `parseExcelRankings()` 转成统一模型。
 
 ## 分层
 
-- `src/data`：JSON / Excel 校验与统一数据模型
-- `src/data/thailand-provinces.geo.json`：独立的 77 府边界数据
+- `src/data`：JSON / Excel 校验与统一数据模型；`provinceAudit.ts` 负责 `provinceId` 与府名的一致性校验、以及 id/英文名/泰文名的三向解析（纯函数、可单测）
+- `src/data/thailand-provinces.geo.json`：独立的 77 府边界数据（含 `provinceId` / `provinceEn` / `provinceTh`）
+- `src/framing`：数据驱动的静态取景算法（纯函数、可单测）
 - `src/timeline`：音频片段时长 → Remotion 帧时间轴
 - `src/config`：主题与动画参数
 - `src/video`：确定性 SVG 地图渲染和 UI
+
+## 地图取景（固定镜头）
+
+地图不再强制显示完整国家。生成每个视频前，`src/framing/resolveViewport.ts` 会根据**本次完整排名集合**一次性算出固定视口，整个视频从头到尾使用同一个中心与缩放——不随排名逐条移动，不因高亮重新取景，也没有推拉或抖动。
+
+工作方式：
+
+1. **匹配**：排名记录按 `provinceId`（大小写/空白容错）与 GeoJSON 要素关联，绝不使用府名；重复 id 只计一次并告警，找不到要素的区域进入 `missingIds` 并告警，不参与取景计算。
+2. **边界**：用 d3-geo 的 `fitExtent` 在真实投影后的多边形边界上取景（不做经纬度线性近似，也不用质心平均当作中心）。
+3. **离群取舍**：`coverageThreshold` 按**排名区域数量**计算覆盖比例（一个排名项 = 一份权重，大府不会主导取景）。只有当去掉某个区域后 zoom 增益超过预设门槛时才会把它留在画面外，且离群区域的数据、排名、播报全部保留，只是画面里看不到，并在生成日志、响应与 UI 中明确列出。
+4. **收敛**：zoom 被限制在 `[minZoom, maxZoom]`（默认 5–12），异常输入一律回退默认值并给出可定位的警告。
+
+**画布与标题的关系**：地图仍是铺满整幅 1080×1920 画布的底层，但**从标题带下沿开始**（`MAP_SAFE_INSET.top` = `MAP_OVERLAY_BANDS.top` = 250）——大标题字号大、颜色深，不再压住任何排名区域；页脚一侧保持全出血，地图继续延伸到页脚背后。顶部渐变遮罩只覆盖标题带附近，不会压暗排名区域；底部遮罩压暗页脚背后的地图。浮动排名标签被钳制在标题/页脚之间的无遮挡安全带里（`viewport.labelRect`）。预览界面会用暗色带标出这两条遮盖区。
+
+配置项（`ProjectData.framing`，Web 端「4 / 地图取景」面板，或请求体 `framing` 字段）：
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `fitMode` | `data-driven` | `data-driven` 按数据自动取景 / `full-country` 完整国家（铺满整幅画布）/ `manual` 手动中心与缩放 |
+| `framingPreset` | `balanced` | `tight` 尽量放大重点区域（允许丢更多离群区域）/ `balanced` 平衡 / `wide` 展示更广范围（几乎不丢区域） |
+| `coverageThreshold` | `0.9` | `(0, 1]`，按排名区域数量计算的目标覆盖比例 |
+| `padding` | 随预设 | `0 – 0.3`，在安全区内额外留白；`full-country` 模式忽略此项 |
+| `strictCoverage` | `false` | 开启后，未能覆盖全部排名区域时输出显式告警 |
+| `manualCenter` / `manualZoom` | — | 仅 `fitMode: "manual"` 时生效，zoom 会被收敛到限制内 |
+
+同一份输入、同一配置永远得到同一个视口（结果可复现且带缓存），不同视频任务之间互不共享。取景结果同时写进 `timeline.json` 的 `framing` 块，方便核对。取景计算与逐帧渲染完全分离：地图组件每帧只用现成的 `scale/translate` 重建投影。
+
+测试：`npm run test:framing` 覆盖集中、南部、离群、分散、异常输入、多任务隔离与模式切换（A–G 场景，使用真实 77 府数据）；`npm run test:data` 覆盖 id 与名称不一致、别名归一化、相似府名、空名与未知 id，以及 id/英文名/泰文名三向解析（含泰文 `จังหวัด` 前缀、短泰文名不误配、多候选不猜）与府列表三列完整性。
+
 
 ## 画幅与分辨率
 

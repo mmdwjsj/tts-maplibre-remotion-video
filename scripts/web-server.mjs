@@ -121,6 +121,109 @@ const ttsRegistry = createTtsRegistry({
   config: ttsConfig,
 });
 
+/**
+ * The static framing algorithm lives in `src/framing/resolveViewport.ts` and is
+ * loaded by the render pipeline. The dev server loads the very same module (Node
+ * executes TypeScript directly here) so the preview, the generation log and the
+ * MP4 all use one implementation. If the running Node cannot execute TypeScript,
+ * framing simply degrades: generation still works, only the preview endpoint and
+ * the framing log report the limitation.
+ */
+let framingModule = null;
+try {
+  framingModule = await import("../src/framing/resolveViewport.ts");
+} catch (error) {
+  console.warn(
+    `[framing] 无法加载 TypeScript 取景模块，预览取景与取景日志不可用：${error.message}`,
+  );
+}
+
+let provinceAuditModule = null;
+try {
+  provinceAuditModule = await import("../src/data/provinceAudit.ts");
+} catch (error) {
+  console.warn(
+    `[data] 无法加载府名校验模块，provinceId 与名称一致性检查不可用：${error.message}`,
+  );
+}
+
+let provinceGeoJson = null;
+try {
+  provinceGeoJson = JSON.parse(
+    fs.readFileSync(
+      path.join(root, "src", "data", "thailand-provinces.geo.json"),
+      "utf8",
+    ),
+  );
+} catch (error) {
+  console.warn(
+    `[data] 无法读取行政区域边界数据，取景预览与名称校验不可用：${error.message}`,
+  );
+}
+
+/**
+ * Resolves the static viewport for one job and prints the generation log:
+ * framing mode, centre, zoom, coverage and — explicitly — every ranking region
+ * that ended up outside the frame.
+ */
+const resolveFraming = (rankings, framing) => {
+  if (!framingModule || !provinceGeoJson) return null;
+  const viewport = framingModule.resolveViewport(
+    provinceGeoJson,
+    (Array.isArray(rankings) ? rankings : []).map((row) => row?.provinceId),
+    framing,
+    framingModule.MAP_STAGE,
+  );
+  framingModule
+    .describeViewport(viewport)
+    .forEach((line) =>
+      line.startsWith("警告：")
+        ? console.warn(`[framing] ${line}`)
+        : console.log(`[framing] ${line}`),
+    );
+  return viewport;
+};
+
+/**
+ * Checks every row's `provinceId` against the name that row carries.
+ *
+ * The renderer keys off `provinceId` on purpose (province names are unreliable),
+ * so a row that *names* one province while *pointing* at another lights up the
+ * wrong shape and looks like a map bug. This is the check that catches it before
+ * a render ships, and it reverse-looks-up the id the name implies.
+ */
+const auditProvinces = (rankings) => {
+  if (!provinceAuditModule || !provinceGeoJson) return null;
+  const audit = provinceAuditModule.auditRankings(provinceGeoJson, rankings);
+  audit.warnings.forEach((line) => console.warn(`[data] ${line}`));
+  if (!audit.warnings.length) {
+    console.log(
+      `[data] provinceId 与府名一致（${audit.checked}/${audit.total} 行可比对）`,
+    );
+  }
+  return audit;
+};
+
+const framingSummary = (viewport) =>
+  viewport
+    ? {
+        mode: viewport.mode,
+        requestedMode: viewport.requestedMode,
+        preset: viewport.preset,
+        coverageThreshold: viewport.coverageThreshold,
+        coverage: viewport.coverage,
+        coveredCount: viewport.coveredCount,
+        totalCount: viewport.totalCount,
+        center: viewport.center,
+        zoom: viewport.zoom,
+        referenceZoom: viewport.referenceZoom,
+        keptIds: viewport.keptIds,
+        droppedIds: viewport.droppedIds,
+        missingIds: viewport.missingIds,
+        warnings: viewport.warnings,
+      }
+    : null;
+
 const wavDuration = (file) => {
   const buffer = fs.readFileSync(file);
   const byteRate = buffer.readUInt32LE(28);
@@ -332,6 +435,79 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/api/provinces/resolve") {
+    try {
+      if (!provinceAuditModule || !provinceGeoJson) {
+        throw Object.assign(
+          new Error(
+            "当前 Node 无法直接执行 TypeScript，府名解析不可用；可直接填府 ID",
+          ),
+          { statusCode: 501, code: "PROVINCE_LOOKUP_UNAVAILABLE" },
+        );
+      }
+      const body = await readBody(req);
+      // The form fills 府 ID / 英文名 / 泰文名 from whichever column the user
+      // touched; the fuzzy half of that lives here so the browser does not
+      // re-implement (and drift from) the normalisation rules.
+      json(
+        res,
+        200,
+        provinceAuditModule.lookupProvince(provinceGeoJson, body.value),
+      );
+    } catch (error) {
+      jsonError(res, error);
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/framing/preview") {
+    try {
+      if (!framingModule || !provinceGeoJson) {
+        throw Object.assign(
+          new Error(
+            "当前 Node 无法直接执行 TypeScript，取景预览不可用；生成流程不受影响",
+          ),
+          { statusCode: 501, code: "FRAMING_UNAVAILABLE" },
+        );
+      }
+      const body = await readBody(req);
+      const { options } = framingModule.normalizeFramingOptions(body.framing);
+      const viewport = framingModule.resolveViewport(
+        provinceGeoJson,
+        (Array.isArray(body.rankings) ? body.rankings : []).map(
+          (row) => row?.provinceId,
+        ),
+        // Raw options on purpose: `resolveViewport` validates them and merges the
+        // validation warnings into `viewport.warnings`, so nothing is swallowed.
+        body.framing,
+        framingModule.MAP_STAGE,
+      );
+      // Path data is produced by the same projection the render uses, so what
+      // the browser draws is pixel-for-pixel what Remotion will draw.
+      json(res, 200, {
+        options,
+        viewport,
+        paths: framingModule.projectFeatures(viewport, provinceGeoJson),
+        // The full province list (id + 英文名 + 泰文名) feeds the 府 ID picker and
+        // the name columns in the UI, so none of the three is ever typed from
+        // memory, and choosing any one of them fills the other two.
+        provinces:
+          provinceAuditModule && provinceGeoJson
+            ? provinceAuditModule.listProvinces(provinceGeoJson)
+            : [],
+        // Silent here on purpose: the preview runs while typing, the generation
+        // path is the one that writes the log.
+        audit:
+          provinceAuditModule && provinceGeoJson
+            ? provinceAuditModule.auditRankings(provinceGeoJson, body.rankings)
+            : null,
+      });
+    } catch (error) {
+      jsonError(res, error);
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/api/generate") {
     try {
       const body = await readBody(req);
@@ -339,6 +515,38 @@ const server = http.createServer(async (req, res) => {
       if (!ttsRequest.text) throw new Error("TTS text cannot be empty");
       if (!Array.isArray(body.rankings) || !body.rankings.length)
         throw new Error("Request failed");
+
+      // The id/name check runs first: a row that points at province A while
+      // naming province B would otherwise render a perfectly valid — and
+      // completely wrong — highlight.
+      const provinceAudit = auditProvinces(body.rankings);
+      if (
+        body.strictNaming === true &&
+        provinceAudit &&
+        provinceAudit.mismatched.length
+      ) {
+        throw Object.assign(
+          new Error(
+            `provinceId 与名称不一致，已按 strictNaming 拒绝生成：${provinceAudit.mismatched
+              .map(
+                (item) =>
+                  `${item.provinceId}=${item.geoName}（填的是 ${item.givenName}${
+                    item.suggestedIds.length
+                      ? `，应为 ${item.suggestedIds.join('/')}`
+                      : ''
+                  }）`,
+              )
+              .join("；")}`,
+          ),
+          { statusCode: 400, code: "PROVINCE_NAME_MISMATCH" },
+        );
+      }
+
+      // The static viewport is resolved once, from the complete ranking set and
+      // before any render work starts, then held for the whole video. Resolving
+      // it here also writes the framing log (including every region that ends up
+      // outside the frame).
+      const viewport = resolveFraming(body.rankings, body.framing);
 
       const outputName = safeName(body.outputName);
       const wavPath = path.join(generatedDir, `${outputName}.wav`);
@@ -435,6 +643,13 @@ const server = http.createServer(async (req, res) => {
         gap,
         totalDuration,
         totalFrames,
+        framing: viewport
+          ? {
+              options: body.framing ?? {},
+              viewport: framingSummary(viewport),
+            }
+          : undefined,
+        provinceAudit: provinceAudit ?? undefined,
         segments,
       };
       fs.writeFileSync(timelinePath, JSON.stringify(timeline, null, 2), "utf8");
@@ -480,6 +695,10 @@ const server = http.createServer(async (req, res) => {
             duration: segment.duration,
             gapAfter: segment.gapAfter,
           })),
+          // Same raw options as everywhere else: the framing module inside the
+          // bundle validates them exactly like the server just did, so preview
+          // and MP4 resolve to the identical viewport.
+          framing: body.framing ?? {},
         },
       };
 
@@ -515,6 +734,17 @@ const server = http.createServer(async (req, res) => {
         totalFrames,
         resolution: `${width}x${height}`,
         fps,
+        framing: framingSummary(viewport),
+        // `mismatched` is the actionable part; the UI turns it into a per-row
+        // hint plus a one-click fix.
+        provinceAudit: provinceAudit
+          ? {
+              mismatched: provinceAudit.mismatched,
+              unknownIds: provinceAudit.unknownIds,
+              duplicateIds: provinceAudit.duplicateIds,
+              warnings: provinceAudit.warnings,
+            }
+          : null,
         files: {
           wav: `/out/generated/${outputName}.wav`,
           timeline: `/out/generated/${outputName}.timeline.json`,
