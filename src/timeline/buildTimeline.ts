@@ -1,27 +1,72 @@
-﻿import { animation } from "../config/theme";
-import type { ProjectData, RankingDatum } from "../types";
+﻿// The `.ts` extension is deliberate: it keeps this module loadable straight
+// from Node (type stripping) so `scripts/timeline/timeline.test.mjs` can test
+// the real implementation instead of a copy.
+import { animation } from "../config/theme.ts";
+import type { AudioSegment, ProjectData, RankingDatum } from "../types";
+
+/**
+ * Which piece of a narrated line a segment covers.
+ *
+ * A ranking line is spoken in two pieces — the rank announcement
+ * (`อันดับ 3`) and then the province itself — and the map lights the province
+ * when the *second* piece starts. `line` is a whole line in one piece: it is
+ * what render props written before the split carry, and what a line that says
+ * nothing about ranks would fall back to.
+ */
+export type TimelinePart = "opening" | "rank" | "name" | "line";
 
 /**
  * A continuous block of the video timeline.
- * `activeStart..activeEnd` is the reveal window of the highlighted province,
- * `activeEnd..end` is the trailing silence where the previous province stays lit.
+ *
+ * The narration occupies `[start, start + duration)` and `revealAt` is the
+ * instant the map reacts to it. Revealing a province when its *name* is voiced
+ * (rather than when its line begins, or when the whole line has been read out)
+ * is what keeps the highlight on the voice: the rank is announced first, the
+ * province lights up as it is being named.
  */
 export type TimelineSegment = {
   key: string;
+  /** The province this segment belongs to; absent on `opening` and `rank`. */
   datum?: RankingDatum;
+  part: TimelinePart;
+  /** Frame the narration for this piece starts. */
   start: number;
-  activeStart: number;
-  activeEnd: number;
+  /** Spoken length in frames; the narration occupies `[start, start + duration)`. */
   duration: number;
+  /**
+   * Frame the province lights up.
+   *
+   * - `name`: `start` — the province appears as its name is voiced.
+   * - `rank` / `opening`: the end of the narration (nothing to light).
+   * - `line`: the end of the narration, because the name is inside it.
+   */
+  revealAt: number;
+  /** Frame the segment ends, trailing silence included. */
   end: number;
 };
 
 export type VideoTimeline = {
   introFrames: number;
+  /**
+   * Frame at which the title header must be gone, `0` when it should stay.
+   *
+   * The header only introduces the video, so it fades out the moment the opening
+   * line has been spoken — after that it would just sit on top of the map. With
+   * no opening line there is nothing to finish, so the header stays.
+   */
+  titleEndFrames: number;
   segments: TimelineSegment[];
   finalStart: number;
   totalFrames: number;
 };
+
+/**
+ * Share of a line taken by the rank announcement (`อันดับ 3 `). The audio path
+ * measures the real split from the real text; the offline path has no text, so
+ * it uses the share the Thai template produces (9 of 45 characters for a typical
+ * line).
+ */
+export const RANK_PREFIX_SHARE = 0.2;
 
 const timelineCache = new WeakMap<ProjectData, VideoTimeline>();
 
@@ -31,6 +76,13 @@ const toFrames = (seconds: number, fps: number) =>
 /** The spoken countdown reveals the lowest rank first and #1 last. */
 const sortByRevealOrder = (rankings: RankingDatum[]) =>
   [...rankings].sort((a, b) => b.rank - a.rank);
+
+const partOf = (segment: AudioSegment): TimelinePart => {
+  if (segment.type === "opening") return "opening";
+  if (segment.part === "rank") return "rank";
+  if (segment.part === "name") return "name";
+  return "line";
+};
 
 /**
  * Follows the synthesized audio exactly: each segment's start, duration and
@@ -50,39 +102,46 @@ const buildFromAudioSegments = (
   let previousFrame = 0;
 
   (project.audioSegments ?? []).forEach((segment, index) => {
-    const activeSeconds = Math.max(0, segment.duration);
+    const spokenSeconds = Math.max(0, segment.duration);
     const gapSeconds = Math.max(0, segment.gapAfter ?? 0);
+    const part = partOf(segment);
     const start = previousFrame;
-    const activeEnd = Math.max(
+    const narrated = Math.max(
       start + 1,
-      toFrames(previousSeconds + activeSeconds, fps),
+      toFrames(previousSeconds + spokenSeconds, fps),
     );
     const end = Math.max(
-      activeEnd,
-      toFrames(previousSeconds + activeSeconds + gapSeconds, fps),
+      narrated,
+      toFrames(previousSeconds + spokenSeconds + gapSeconds, fps),
     );
+    const datum =
+      part === "rank" || part === "opening" || segment.rank === undefined
+        ? undefined
+        : byRank.get(segment.rank);
 
     segments.push({
-      key: `${segment.type}-${segment.rank ?? "intro"}-${index}`,
-      datum:
-        segment.type === "ranking" && segment.rank !== undefined
-          ? byRank.get(segment.rank)
-          : undefined,
+      key: `${segment.type}-${segment.rank ?? "intro"}-${part}-${index}`,
+      datum,
+      part,
       start,
-      activeStart: start,
-      activeEnd,
-      duration: activeEnd - start,
+      duration: narrated - start,
+      // A province lights the moment its name starts being voiced: the rank has
+      // just been read out and the voice is moving onto the province itself.
+      revealAt: part === "name" ? start : narrated,
       end,
     });
 
-    previousSeconds += activeSeconds + gapSeconds;
+    previousSeconds += spokenSeconds + gapSeconds;
     previousFrame = end;
   });
 
   const finalStart = toFrames(previousSeconds, fps);
+  const opening =
+    segments[0] && segments[0].part === "opening" ? segments[0] : undefined;
 
   return {
     introFrames: 0,
+    titleEndFrames: opening ? opening.revealAt : 0,
     segments,
     finalStart,
     // Round up so the rendered video is never shorter than the audio track.
@@ -95,45 +154,57 @@ const buildFromAudioSegments = (
 
 /**
  * Offline fallback used by Remotion Studio / CLI when no audio segment metadata
- * is available: every province gets its nominal `narrationDuration`.
+ * is available: every province gets its nominal `narrationDuration`, split into
+ * the same rank-then-name pair so the studio preview keeps the same rhythm.
  */
 const buildFromNarrationDurations = (
   project: ProjectData,
   fps: number,
 ): VideoTimeline => {
   const introFrames = toFrames(project.introDuration ?? animation.introDuration, fps);
+  const segments: TimelineSegment[] = [];
   let previousSeconds = 0;
   let previousFrame = introFrames;
 
-  const segments = sortByRevealOrder(project.rankings).map(
-    (datum): TimelineSegment => {
-      const activeSeconds =
-        datum.narrationDuration ?? animation.defaultSegmentDuration;
+  sortByRevealOrder(project.rankings).forEach((datum) => {
+    const lineSeconds =
+      datum.narrationDuration ?? animation.defaultSegmentDuration;
+    const rankSeconds = lineSeconds * RANK_PREFIX_SHARE;
+    const nameSeconds = lineSeconds - rankSeconds;
+    const pieces: Array<{part: TimelinePart; seconds: number; datum?: RankingDatum}> = [
+      {part: "rank", seconds: rankSeconds},
+      {part: "name", seconds: nameSeconds, datum},
+    ];
+
+    pieces.forEach((piece) => {
       const start = previousFrame;
-      const activeEnd = Math.max(
+      const narrated = Math.max(
         start + 1,
-        introFrames + toFrames(previousSeconds + activeSeconds, fps),
+        introFrames + toFrames(previousSeconds + piece.seconds, fps),
       );
 
-      previousSeconds += activeSeconds;
-      previousFrame = activeEnd;
-
-      return {
-        key: `rank-${datum.rank}`,
-        datum,
+      segments.push({
+        key: `rank-${datum.rank}-${piece.part}`,
+        datum: piece.datum,
+        part: piece.part,
         start,
-        activeStart: start,
-        activeEnd,
-        duration: activeEnd - start,
-        end: activeEnd,
-      };
-    },
-  );
+        duration: narrated - start,
+        revealAt: piece.part === "name" ? start : narrated,
+        end: narrated,
+      });
+
+      previousSeconds += piece.seconds;
+      previousFrame = narrated;
+    });
+  });
 
   const holdSeconds = project.finalHoldDuration ?? animation.finalHoldDuration;
 
   return {
     introFrames,
+    // The silent intro card is the only thing before the first reveal here, so
+    // the header lives exactly as long as it does.
+    titleEndFrames: introFrames,
     segments,
     finalStart: previousFrame,
     totalFrames: Math.max(
@@ -154,4 +225,25 @@ export const buildTimeline = (project: ProjectData): VideoTimeline => {
 
   timelineCache.set(project, timeline);
   return timeline;
+};
+
+/**
+ * Index of the segment the map currently reacts to: the last one whose
+ * `revealAt` has been reached. `-1` means nothing is lit yet, either because the
+ * video has not started or because only the opening line has played.
+ *
+ * A `rank` piece shares its `revealAt` with the `name` piece that follows it, so
+ * during the announcement the index still points at the *previous* province —
+ * and the moment the name starts it slides onto the new one.
+ */
+export const findRevealedSegmentIndex = (
+  segments: TimelineSegment[],
+  frame: number,
+): number => {
+  let revealed = -1;
+  for (let index = 0; index < segments.length; index += 1) {
+    if (segments[index].revealAt > frame) break;
+    revealed = index;
+  }
+  return revealed;
 };

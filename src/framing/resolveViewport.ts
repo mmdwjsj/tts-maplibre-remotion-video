@@ -36,27 +36,27 @@ export type FramingRect = {x0: number; y0: number; x1: number; y1: number};
 export const MAP_STAGE: FramingStage = {width: 1080, height: 1920};
 
 /**
- * Screen bands the title header (top) and the footer (bottom) occupy. The top
- * one is doubly meaningful: it is the floor the *map itself* starts from, and it
- * keeps floating rank labels clear of the title. The render paints a gradient
- * scrim over both bands for the same reason.
+ * Screen bands the title header (top) and the footer (bottom) occupy. Both are
+ * doubly meaningful: they are the floor/ceiling the *map itself* respects, and
+ * they keep floating rank labels clear of the overlays. The render paints a
+ * gradient scrim over both bands for the same reason.
+ *
+ * `bottom` is deliberately generous: on a phone the caption and the app's own
+ * controls sit over the lower part of the frame and would bury a province or a
+ * rank label sitting there.
  */
-export const MAP_OVERLAY_BANDS = {top: 250, bottom: 130};
+export const MAP_OVERLAY_BANDS = {top: 250, bottom: 200};
 
 /**
- * Fit-rect insets. `top` deliberately equals the header band: the title is large
- * and dark, so the map starts *below* it instead of running underneath, which
- * keeps every ranked province unobstructed. The other three edges stay flush
- * with the canvas, so the map still uses the full width and the room behind the
- * footer.
- *
- * Because the header band takes the vertical room the footer band does not, the
- * stage keeps its full height — shrinking it would only cost zoom.
+ * Fit-rect insets. The map is full-bleed horizontally but stops at both overlay
+ * bands vertically: the title is large and dark, and the bottom of a phone
+ * screen carries the caption bar — neither may cover a ranked province. The left
+ * and right edges stay flush with the canvas.
  */
 export const MAP_SAFE_INSET = {
   top: MAP_OVERLAY_BANDS.top,
   right: 24,
-  bottom: 24,
+  bottom: MAP_OVERLAY_BANDS.bottom,
   left: 24,
 };
 

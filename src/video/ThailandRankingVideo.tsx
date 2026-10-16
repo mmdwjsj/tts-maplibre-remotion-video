@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import {
   AbsoluteFill,
   Audio,
+  interpolate,
   spring,
   staticFile,
   useCurrentFrame,
@@ -9,7 +10,7 @@ import {
 } from "remotion";
 import geoData from "../data/thailand-provinces.geo.json";
 import type { ProjectData, ThailandGeoJson } from "../types";
-import { buildTimeline } from "../timeline/buildTimeline";
+import { buildTimeline, findRevealedSegmentIndex } from "../timeline/buildTimeline";
 import { theme } from "../config/theme";
 import { ThailandMap } from "./components/ThailandMap";
 import { MAP_STAGE, resolveViewport } from "../framing/resolveViewport";
@@ -33,22 +34,28 @@ const FOOTER_SCRIM_HEIGHT = 260;
 const FOOTER_SCRIM =
   "linear-gradient(0deg, rgba(8,16,22,0.95) 0%, rgba(8,16,22,0.7) 45%, rgba(8,16,22,0) 100%)";
 
+/** Frames the title takes to fade away once the opening line has been spoken. */
+const TITLE_FADE_FRAMES = 9;
+
 export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   project,
 }) => {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const timeline = useMemo(() => buildTimeline(project), [project]);
-  const activeIndex = findActiveSegmentIndex(timeline.segments, frame);
+  // A ranking line is two segments — the rank announcement and the province.
+  // The province is lit at the instant its *name* starts being voiced, so while
+  // the rank is read out the map still shows the province announced before it.
+  const revealedIndex = findRevealedSegmentIndex(timeline.segments, frame);
   const activeSegment =
-    activeIndex === -1 ? undefined : timeline.segments[activeIndex];
+    revealedIndex === -1 ? undefined : timeline.segments[revealedIndex];
   const visibleIds = useMemo(
     () =>
       timeline.segments
-        .slice(0, activeIndex + 1)
+        .slice(0, revealedIndex + 1)
         .map((segment) => segment.datum?.provinceId)
         .filter((provinceId): provinceId is string => Boolean(provinceId)),
-    [activeIndex, timeline.segments],
+    [revealedIndex, timeline.segments],
   );
   // Static camera: resolved once from the *complete* ranking set, before any
   // frame is rendered, and reused for every frame. Nothing here depends on the
@@ -64,6 +71,20 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
     [project],
   );
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 90 } });
+  // The title is only an intro card: it leaves the stage as soon as the opening
+  // line has been spoken, so it never competes with the map for attention.
+  const titleOpacity =
+    timeline.titleEndFrames > 0
+      ? interpolate(
+          frame,
+          [
+            timeline.titleEndFrames - 4,
+            timeline.titleEndFrames + TITLE_FADE_FRAMES,
+          ],
+          [1, 0],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+        )
+      : 1;
   const scale = Math.min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT);
 
   return (
@@ -111,12 +132,12 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             project={project}
             visibleIds={visibleIds}
             active={activeSegment?.datum}
-            activeStart={activeSegment?.activeStart ?? 0}
+            revealStart={activeSegment?.revealAt ?? 0}
             framing={framing}
           />
         </div>
         {/* Scrims that keep the header/footer text readable when a province or a
-            leader line runs underneath. */}
+            leader line runs underneath. The header one fades out with the title. */}
         <div
           style={{
             position: "absolute",
@@ -125,6 +146,7 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             right: 0,
             height: HEADER_SCRIM_HEIGHT,
             background: HEADER_SCRIM,
+            opacity: titleOpacity,
             pointerEvents: "none",
           }}
         />
@@ -148,6 +170,7 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             height: 1,
             background:
               "linear-gradient(90deg, transparent, rgba(41,229,210,.55), transparent)",
+            opacity: titleOpacity,
           }}
         />
         <header
@@ -156,8 +179,8 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             top: 95,
             left: 72,
             right: 72,
-            opacity: intro,
-            transform: `translateY(${(1 - intro) * 18}px)`,
+            opacity: intro * titleOpacity,
+            transform: `translateY(${(1 - intro) * 18 - (1 - titleOpacity) * 16}px)`,
           }}
         >
           {/* <div style={{ fontSize: 22, letterSpacing: 7, color: theme.accent }}>
@@ -199,26 +222,4 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
       {project.audioSrc ? <Audio src={staticFile(project.audioSrc)} /> : null}
     </AbsoluteFill>
   );
-};
-
-const findActiveSegmentIndex = (
-  segments: ReturnType<typeof buildTimeline>["segments"],
-  frame: number,
-) => {
-  if (!segments.length) return -1;
-  // Before the first reveal nothing is lit yet.
-  if (frame < segments[0].start) return -1;
-  // After the last reveal we hold the final state instead of clearing the map.
-  if (frame >= segments[segments.length - 1].end) return segments.length - 1;
-
-  let low = 0;
-  let high = segments.length - 1;
-  while (low <= high) {
-    const middle = (low + high) >> 1;
-    const segment = segments[middle];
-    if (frame < segment.start) high = middle - 1;
-    else if (frame >= segment.end) low = middle + 1;
-    else return middle;
-  }
-  return segments.length - 1;
 };

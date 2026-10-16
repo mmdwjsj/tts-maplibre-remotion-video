@@ -11,7 +11,8 @@ type Props = {
   project: ProjectData;
   visibleIds: string[];
   active?: RankingDatum;
-  activeStart: number;
+  /** Frame the highlight animation starts — the instant the province is named. */
+  revealStart: number;
   /**
    * Static viewport resolved once for the whole video. The map never re-derives
    * centre/zoom per frame, so the camera is identical in every frame.
@@ -73,7 +74,7 @@ const placeLabel = (cx: number, cy: number, rect: FramingRect, panelBounds: Fram
   };
 };
 
-export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, active, activeStart, framing}) => {
+export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, active, revealStart, framing}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
   const projection = useMemo(() => createProjection(framing), [framing]);
@@ -89,7 +90,7 @@ export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, acti
     path: path(feature) ?? '',
     center: path.centroid(feature),
   })), [geojson.features, path]);
-  const activeProgress = active ? spring({frame: frame-activeStart, fps, config: {damping: 15, stiffness: 130}}) : 0;
+  const activeProgress = active ? spring({frame: frame-revealStart, fps, config: {damping: 15, stiffness: 130}}) : 0;
   const activeFeature = active
     ? renderedFeatures.find((feature) => feature.id === idKey(active.provinceId))
     : undefined;

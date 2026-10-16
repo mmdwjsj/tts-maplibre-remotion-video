@@ -16,10 +16,16 @@ export type RankingDatum = {
  * One spoken block of the synthesized narration, in seconds.
  * `opening` is the welcome line; `ranking` maps back to a RankingDatum by rank.
  * `gapAfter` is the silence inserted after the block.
+ *
+ * A ranking line is deliberately two blocks — `part: 'rank'` is the rank
+ * announcement (`อันดับ 3`) and `part: 'name'` is the province itself — so the
+ * map can light the province the moment its name is voiced. Older props carry
+ * neither block and no `part`, which means one whole line per province.
  */
 export type AudioSegment = {
   type: 'opening' | 'ranking';
   rank?: number;
+  part?: 'rank' | 'name';
   duration: number;
   gapAfter?: number;
 };

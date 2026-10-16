@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test:tts": "node --test scripts/tts/architecture.test.mjs",
     "test:framing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/framing/viewport.test.mjs",
+    "test:timeline": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/timeline/timeline.test.mjs scripts/timeline/narration.test.mjs",
     "test:data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/data/province-audit.test.mjs",
     "data:thai-names": "node scripts/data/fill-thai-names.mjs",
     "validate:data": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/validate-data.mjs"

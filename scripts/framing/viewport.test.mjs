@@ -316,31 +316,37 @@ test('场景G：full-country 与 manual 模式，以及原有行为兼容', () =
   assert.equal(view(EAST, {}).scale, view(EAST, {fitMode: 'data-driven'}).scale);
 });
 
-test('地图避开标题带：取景从标题下方开始，页脚背后仍然铺满', () => {
+test('地图避开标题带与页脚带：上下都留出遮盖区', () => {
   // 画布就是整幅 1080x1920 设计稿。
   assert.deepEqual(MAP_STAGE, {width: 1080, height: 1920});
 
   const framed = view(EAST, {});
   // 横向铺满，只留一点贴边安全边距。
   assert.ok(framed.rect.x1 - framed.rect.x0 > MAP_STAGE.width * 0.8);
-  // 纵向：上边缘不进入标题带（大标题不再压住任何排名区域），下边缘继续延伸
-  // 到页脚背后。preset 的 padding 会在此基础上再内缩一点。
+  // 纵向：上边缘不进入标题带（大标题不再压住任何排名区域），下边缘停在页脚带
+  // 之上（手机底部的字幕/按钮同样不压住区域）。preset 的 padding 在此基础上再内缩。
   assert.equal(MAP_SAFE_INSET.top, MAP_OVERLAY_BANDS.top);
+  assert.equal(MAP_SAFE_INSET.bottom, MAP_OVERLAY_BANDS.bottom);
   assert.ok(
     framed.rect.y0 >= MAP_OVERLAY_BANDS.top,
     `rect.y0 ${framed.rect.y0} 落进了标题带`,
+  );
+  assert.ok(
+    framed.rect.y1 <= MAP_STAGE.height - MAP_OVERLAY_BANDS.bottom,
+    `rect.y1 ${framed.rect.y1} 进入页脚带`,
   );
   const usableHeight = MAP_STAGE.height - MAP_OVERLAY_BANDS.top - MAP_SAFE_INSET.bottom;
   assert.ok(
     framed.rect.y1 - framed.rect.y0 > usableHeight * 0.85,
     `rect 高度 ${framed.rect.y1 - framed.rect.y0} vs 可用 ${usableHeight}`,
   );
+  // 底部留白是用户明确要的距离，不是取整误差。
   assert.ok(
-    framed.rect.y1 > MAP_STAGE.height - MAP_OVERLAY_BANDS.bottom,
-    `rect.y1 ${framed.rect.y1}`,
+    MAP_STAGE.height - framed.rect.y1 >= MAP_OVERLAY_BANDS.bottom,
+    `底部留白 ${MAP_STAGE.height - framed.rect.y1}px 不足 ${MAP_OVERLAY_BANDS.bottom}px`,
   );
 
-  // 浮动标签的安全区则避开标题与页脚，标签文字不会被遮罩压住。
+  // 浮动标签的安全区同样避开标题与页脚，标签文字不会被遮罩压住。
   assert.ok(framed.labelRect.y0 >= MAP_OVERLAY_BANDS.top);
   assert.ok(framed.labelRect.y1 <= MAP_STAGE.height - MAP_OVERLAY_BANDS.bottom);
   assert.ok(framed.labelRect.y0 < framed.labelRect.y1);

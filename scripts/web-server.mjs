@@ -147,6 +147,21 @@ try {
   );
 }
 
+/**
+ * The narration module turns the ranking table into the lines the engine speaks
+ * and locates the rank/name boundary inside each of them. The timeline is split
+ * on exactly those boundaries, so the map lights a province the moment the voice
+ * reaches its name.
+ */
+let narrationModule = null;
+try {
+  narrationModule = await import("../src/timeline/narration.ts");
+} catch (error) {
+  console.warn(
+    `[timeline] 无法加载旁白拆分模块，将退回按名次/府名固定比例拆分：${error.message}`,
+  );
+}
+
 let provinceGeoJson = null;
 try {
   provinceGeoJson = JSON.parse(
@@ -299,7 +314,7 @@ const insertAudioGaps = async ({
   return output;
 };
 
-const muxAudioIntoVideo = async ({ videoInput, audioInput, output }) => {
+const muxAudioIntoVideo = async ({ videoInput, audioInput, output, muxDuration }) => {
   await run(process.execPath, [
     remotionCli,
     "ffmpeg",
@@ -316,7 +331,12 @@ const muxAudioIntoVideo = async ({ videoInput, audioInput, output }) => {
     "copy",
     "-c:a",
     "aac",
-    "-shortest",
+    // The video runs `finalHoldSeconds` past the narration so the last province
+    // stays visible; pad the audio to exactly the video length. A bare `apad`
+    // pads forever and deadlocks `-shortest` (the muxer then never finalises
+    // the mp4), so the pad gets an explicit whole duration instead.
+    "-af",
+    `apad=whole_dur=${muxDuration}`,
     output,
   ]);
 };
@@ -584,46 +604,127 @@ const server = http.createServer(async (req, res) => {
       const gap = Math.max(0, Number(body.gap) || 0);
       const { width, height } = parseResolution(body.resolution);
       const opening = String(body.opening || "").trim();
+      const ranked = body.rankings.slice().sort((a, b) => b.rank - a.rank);
+      // The script is the ground truth for the timeline: it is literally what the
+      // engine speaks. Reading its real lines (rather than re-deriving them from
+      // a template) is what keeps the highlight on the voice — the per-line audio
+      // slicing and the rank/name boundary are both measured in the spoken text.
+      // A script that no longer lines up with the ranking table (hand-edited, or
+      // missing/extra lines) is ignored and the generated lines are used instead.
+      const scriptLines = narrationModule
+        ? narrationModule.alignScriptLines(
+            body.script,
+            (opening ? 1 : 0) + ranked.length,
+          )
+        : null;
+      const lineAt = (index) => (scriptLines ? scriptLines[index] : undefined);
+      const lineOffset = opening ? 1 : 0;
+      // One item is one gap-delimited block of audio. A ranking item carries the
+      // two `parts` it is spoken in, and each part becomes its own timeline
+      // segment below, so the map can light the province as its name is voiced
+      // instead of waiting for the whole line to be read out.
       const items = [
-        ...(opening ? [{ type: "opening", text: opening }] : []),
-        ...body.rankings
-          .slice()
-          .sort((a, b) => b.rank - a.rank)
-          .map((ranking) => ({
+        ...(opening ? [{ type: "opening", text: lineAt(0) || opening }] : []),
+        ...ranked.map((ranking, index) => {
+          const narration = narrationModule
+            ? narrationModule.buildRankingNarration(
+                ranking,
+                lineAt(lineOffset + index),
+              )
+            : null;
+          const parts = narration?.parts ?? [
+            { part: "rank", text: `Rank ${ranking.rank}: ` },
+            {
+              part: "name",
+              text: `${ranking.provinceTh || ranking.provinceEn} (${ranking.provinceEn}), ${Number(ranking.value).toLocaleString()}`,
+            },
+          ];
+          return {
             type: "ranking",
             rank: ranking.rank,
             provinceId: ranking.provinceId,
             provinceEn: ranking.provinceEn,
             provinceTh: ranking.provinceTh,
-            text: `Rank ${ranking.rank}: ${ranking.provinceTh || ranking.provinceEn} (${ranking.provinceEn}), ${Number(ranking.value).toLocaleString()}`,
-          })),
+            parts,
+            text: narration?.text ?? parts.map((part) => part.text).join(""),
+          };
+        }),
       ];
       const totalCharacters =
         items.reduce((sum, item) => sum + item.text.length, 0) || 1;
       const duration = sourceDuration;
       const spokenDuration = Math.max(0, sourceDuration);
+      // Each item keeps its share of the synthesized audio; inside an item the
+      // parts split that share by their own text length. The silence only lands
+      // on the last part, so it still separates provinces and never interrupts
+      // a line (the audio itself is only sliced per item — see insertAudioGaps).
       let cursor = 0;
-      const segments = items.map((item, index) => {
-        const segmentDuration =
-          (spokenDuration * item.text.length) / totalCharacters;
-        const segment = {
-          ...item,
-          start: +cursor.toFixed(3),
-          duration: +segmentDuration.toFixed(3),
-          gapAfter: index < items.length - 1 ? gap : 0,
-          mapAnimationStart: +cursor.toFixed(3),
-          mapAnimationDuration: +segmentDuration.toFixed(3),
-        };
-        cursor += segmentDuration + (index < items.length - 1 ? gap : 0);
-        return segment;
+      const segments = [];
+      items.forEach((item, index) => {
+        const spoken = (spokenDuration * item.text.length) / totalCharacters;
+        const { parts, ...head } = item;
+        const pieces = parts ?? [{ text: item.text }];
+        const piecesCharacters =
+          pieces.reduce((sum, piece) => sum + piece.text.length, 0) || 1;
+        let pieceCursor = cursor;
+
+        pieces.forEach((piece, pieceIndex) => {
+          const pieceDuration = (spoken * piece.text.length) / piecesCharacters;
+          segments.push({
+            ...head,
+            ...(piece.part ? { part: piece.part } : {}),
+            text: piece.text,
+            start: +pieceCursor.toFixed(3),
+            duration: +pieceDuration.toFixed(3),
+            gapAfter:
+              pieceIndex === pieces.length - 1 && index < items.length - 1
+                ? gap
+                : 0,
+          });
+          pieceCursor += pieceDuration;
+        });
+
+        cursor += spoken + (index < items.length - 1 ? gap : 0);
       });
+      // With the highlight following the voice, the last province would only be
+      // lit for a single frame if the video ended with the audio. Give it the
+      // same quiet moment the other provinces get (never shorter than 1.5s, so
+      // the #1 reveal is always actually visible).
+      const finalHoldSeconds = Math.max(gap, 1.5);
       const totalDuration = +(
         sourceDuration +
         gap * Math.max(0, items.length - 1)
       ).toFixed(3);
-      const totalFrames = Math.ceil(
-        (sourceDuration + gap * Math.max(0, items.length - 1)) * fps,
+      const videoDuration = +(totalDuration + finalHoldSeconds).toFixed(3);
+
+      // The map lights a province when its *name* is voiced — the rank piece has
+      // just been read out and the voice moves onto the province — so the
+      // animation window opens at the start of the `name` piece. Everything else
+      // (the opening line and the rank piece) only reveals at its own end, where
+      // there is nothing to light.
+      const revealAt = segments.map((segment) =>
+        segment.part === "name"
+          ? segment.start
+          : segment.start + segment.duration,
       );
+      segments.forEach((segment, index) => {
+        const nextReveal =
+          index + 1 < revealAt.length ? revealAt[index + 1] : videoDuration;
+        segment.mapAnimationStart = +revealAt[index].toFixed(3);
+        segment.mapAnimationDuration = +Math.max(
+          0,
+          nextReveal - revealAt[index],
+        ).toFixed(3);
+      });
+
+      const totalFrames = Math.ceil(videoDuration * fps);
+
+      // The title header is an intro card: it leaves the stage once the opening
+      // line has been spoken (`0` when there is no opening line to wait for).
+      const titleEnd =
+        segments[0]?.type === "opening"
+          ? +(segments[0].start + segments[0].duration).toFixed(3)
+          : 0;
 
       const timeline = {
         title: body.title,
@@ -641,8 +742,13 @@ const server = http.createServer(async (req, res) => {
         targetSpeechDuration: ttsRequest.targetSeconds,
         ttsModel: ttsRequest.model,
         gap,
-        totalDuration,
+        // Seconds of narrated audio; the rendered video is `finalHoldSeconds`
+        // longer so the last province stays on screen after its reveal.
+        audioDuration: totalDuration,
+        finalHoldSeconds,
+        totalDuration: videoDuration,
         totalFrames,
+        titleEnd,
         framing: viewport
           ? {
               options: body.framing ?? {},
@@ -681,7 +787,9 @@ const server = http.createServer(async (req, res) => {
           // The opening line is narrated, so it lives in audioSegments rather
           // than being a silent intro card.
           introDuration: 0,
-          finalHoldDuration: 0,
+          // Keeps the last province on screen after its reveal instead of
+          // cutting the video the instant its narration ends.
+          finalHoldDuration: finalHoldSeconds,
           audioSrc: "",
           fps,
           width,
@@ -692,6 +800,7 @@ const server = http.createServer(async (req, res) => {
           audioSegments: segments.map((segment) => ({
             type: segment.type,
             ...(segment.type === "ranking" ? { rank: segment.rank } : {}),
+            ...(segment.part ? { part: segment.part } : {}),
             duration: segment.duration,
             gapAfter: segment.gapAfter,
           })),
@@ -726,11 +835,16 @@ const server = http.createServer(async (req, res) => {
         videoInput: sourceMp4,
         audioInput: gappedWavPath,
         output: mp4Path,
+        // Exact length of the rendered video (totalFrames frames), so the
+        // padded audio ends together with the last frame.
+        muxDuration: +(totalFrames / fps).toFixed(3),
       });
 
       json(res, 200, {
         duration,
-        totalDuration,
+        // The rendered video, including the final hold — this is what the UI
+        // reports and what the download actually plays.
+        totalDuration: videoDuration,
         totalFrames,
         resolution: `${width}x${height}`,
         fps,

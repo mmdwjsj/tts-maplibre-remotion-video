@@ -6,6 +6,7 @@
   <title>泰国府级排名音视频生成器</title>
   <style>
     :root {
+      --header-h: 34px;
       font-family: Inter, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
       color: #e8f5f3;
       background: #071218;
@@ -15,78 +16,176 @@
       box-sizing: border-box;
     }
 
+    /* 滚动条：白色滑块 + 透明轨道（保持原来那种醒目的浅色观感），
+       宽度在上一版 10px 基础上再收 20% → 8px。
+       Chromium 走 ::-webkit-scrollbar 自定义外观；Firefox 只认 scrollbar-width，
+       而 Chromium 一旦设了 scrollbar-width 就会忽略 -webkit- 规则，所以分开写。 */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      min-height: 24px;
+      background: #e8f5f3;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #ffffff;
+    }
+
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    @supports not selector(::-webkit-scrollbar) {
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #e8f5f3 transparent;
+      }
+    }
+
+    /* 一屏铺满：首屏正好看到第一排 + 第二排，页面纵向滚动只用来露出第三排。
+       各内容区（数据表、取景预览、设置项）自己带滚动条，不撑高页面。 */
+    html,
     body {
+      height: 100%;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
       margin: 0;
-      min-height: 100vh;
+      overflow: auto;
+      font-size: 12px;
       background: radial-gradient(circle at 50% 0, #12333a, #071218 52%);
     }
 
     header {
       display: flex;
+      flex: none;
+      align-items: center;
       justify-content: space-between;
-      padding: 26px 34px;
+      height: var(--header-h);
+      padding: 0 14px;
       border-bottom: 1px solid #21434a;
     }
 
     h1 {
       margin: 0;
-      font-size: 23px;
-      letter-spacing: 2px;
+      font-size: 15px;
+      letter-spacing: 1.5px;
     }
 
     header span {
       color: #6ee7d8;
+      font-size: 11px;
     }
 
+    /* 第一排 + 第二排：高度锁死一屏（视口高 - 头部），行高自适应，
+       首屏不出现纵向滚动；第三排放在 main 外面，滚一下才看到。 */
     main {
       display: grid;
-      grid-template-columns: 1.15fr 1fr 0.85fr;
-      gap: 18px;
-      max-width: 1500px;
-      margin: auto;
-      padding: 24px;
+      flex: none;
+      /* 中间「地图取景预览」收窄约 5%，让出的宽度补给右侧「视频与 TTS 设置」。
+         预览图本身不跟着变小——靠卡内左右间距和参数字号把空间挤出来。 */
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.9fr) minmax(0, 1.1fr);
+      grid-template-rows: minmax(0, 1fr) max-content;
+      gap: 8px;
+      width: 100%;
+      height: calc(100vh - var(--header-h));
+      max-width: 2100px;
+      min-height: 0;
+      margin: 0 auto;
+      padding: 8px 12px;
+    }
+
+    /* 第三排：与 main 同宽同边距，初始在视口外。 */
+    .script-wrap {
+      flex: none;
+      width: 100%;
+      max-width: 2100px;
+      margin: 0 auto;
+      padding: 0 12px 8px;
     }
 
     .card {
-      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      padding: 10px 12px;
+      overflow: hidden;
       background: #0c2027;
       border: 1px solid #21434a;
-      border-radius: 14px;
+      border-radius: 10px;
+    }
+
+    /* 第一排三张卡：吃掉剩余高度，超出部分由卡内的表格/地图自己滚。 */
+    .card.top {
+      grid-row: 1;
+    }
+
+    /* 第二、三排横跨整行。 */
+    .card.row {
+      grid-column: 1 / -1;
     }
 
     .card h2 {
-      margin: 0 0 14px;
+      flex: 0 0 auto;
+      margin: 0 0 8px;
       color: #8eece0;
-      font-size: 15px;
+      font-size: 12px;
+      letter-spacing: 0.4px;
+    }
+
+    .card h2 .sub {
+      color: #6f9b99;
+      font-size: 11px;
+      font-weight: 400;
+    }
+
+    /* 卡内可滚区域：标题留在原地，内容自己出滚动条。 */
+    .scroll-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
     }
 
     .toolbar,
     .downloads {
       display: flex;
+      flex: 0 0 auto;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 12px;
+      gap: 6px;
+      margin-bottom: 8px;
     }
 
     button,
     .file-label,
     .download {
-      padding: 9px 12px;
+      padding: 5px 9px;
       color: #dffefa;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       text-decoration: none;
       cursor: pointer;
       background: #12383d;
       border: 1px solid #34716e;
-      border-radius: 8px;
+      border-radius: 6px;
     }
 
     button.primary {
       width: auto;
-      padding: 9px 14px;
+      padding: 8px 14px;
       color: #041311;
-      font-size: 15px;
+      font-size: 14px;
+      font-weight: 700;
       background: #2bc7b1;
       border: 0;
     }
@@ -100,55 +199,66 @@
     select,
     textarea {
       width: 100%;
-      padding: 9px;
+      padding: 4px 6px;
       color: #e8f5f3;
       font: inherit;
+      font-size: 12px;
       background: #07161b;
       border: 1px solid #2a5156;
-      border-radius: 7px;
+      border-radius: 5px;
     }
 
-    textarea {
-      min-height: 105px;
-      resize: vertical;
+    select {
+      padding-right: 2px;
     }
 
     .field {
-      margin: 10px 0;
+      margin: 5px 0;
     }
 
     .field label {
       display: block;
-      margin-bottom: 5px;
+      margin-bottom: 3px;
       color: #94afb0;
-      font-size: 12px;
+      font-size: 11px;
     }
 
     .field-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0 10px;
+      gap: 0 8px;
+    }
+
+    .field-grid.cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .field-grid.cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
     }
 
     /* id ↔ 名称不一致的数据校验提示：行内描边 + 汇总面板 + 一键修正 */
     .data-warnings {
       display: none;
-      margin: 0 0 12px;
-      padding: 10px 12px;
+      flex: 0 0 auto;
+      margin: 0 0 8px;
+      padding: 7px 9px;
       border: 1px solid #7a3b2e;
-      border-radius: 8px;
+      border-radius: 6px;
       background: rgba(122, 59, 46, 0.16);
-      font-size: 13px;
-      line-height: 1.75;
+      font-size: 11px;
+      line-height: 1.6;
       color: #ffd9c7;
     }
 
     .data-warnings.show {
       display: block;
+      max-height: 32%;
+      overflow: auto;
     }
 
     .data-warn-title {
-      margin-bottom: 6px;
+      margin-bottom: 4px;
       font-weight: 700;
       color: #ffb99f;
     }
@@ -158,13 +268,13 @@
     }
 
     .data-warn-row + .data-warn-row {
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     button.fix {
-      margin-left: 8px;
-      padding: 2px 9px;
-      font-size: 12px;
+      margin-left: 6px;
+      padding: 1px 7px;
+      font-size: 11px;
       color: #0b1d22;
       background: #ffb99f;
       border: none;
@@ -184,32 +294,22 @@
       box-shadow: 0 0 0 1px rgba(185, 138, 46, 0.4);
     }
 
-    td select.province-id {
-      min-width: 190px;
-      padding: 6px;
-    }
-
-    .link-hint {
-      margin: 0 0 10px;
-      color: #7fa4a3;
-      font-size: 12px;
-      line-height: 1.7;
-    }
-
+    /* 排名数据：窄、短，横竖都自己滚。列宽收紧到刚好放得下值，放不下才出横向滚动条。 */
     .table-wrap {
-      max-height: 480px;
+      flex: 1 1 auto;
+      min-height: 0;
       overflow: auto;
     }
 
     table {
       width: 100%;
-      font-size: 12px;
+      font-size: 11px;
       border-collapse: collapse;
     }
 
     th,
     td {
-      padding: 7px 5px;
+      padding: 3px 4px;
       text-align: left;
       white-space: nowrap;
       border-bottom: 1px solid #1c3940;
@@ -218,38 +318,165 @@
     th {
       position: sticky;
       top: 0;
+      z-index: 1;
       color: #8fb8b7;
       background: #0c2027;
     }
 
     td input {
-      min-width: 70px;
-      padding: 6px;
+      min-width: 44px;
+      padding: 3px 5px;
+    }
+
+    td select.province-id {
+      min-width: 108px;
+      padding: 3px 4px;
     }
 
     .remove {
-      padding: 5px 8px;
+      padding: 2px 6px;
+      font-size: 11px;
       color: #ff9e9e;
       background: transparent;
     }
 
+    .link-hint {
+      flex: 0 0 auto;
+      margin: 0 0 6px;
+      color: #7fa4a3;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    /* 排名数据卡：整体更紧凑，省出宽度给中间的地图取景预览。 */
+    .data-card h2 {
+      font-size: 11px;
+    }
+
+    .data-card h2 .sub {
+      font-size: 10px;
+    }
+
+    .data-card button,
+    .data-card .file-label {
+      padding: 3px 6px;
+      font-size: 10px;
+    }
+
+    .data-card .link-hint {
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .data-card .data-warnings {
+      font-size: 10px;
+    }
+
+    .data-card table {
+      font-size: 10px;
+    }
+
+    .data-card th,
+    .data-card td {
+      padding: 2px 3px;
+    }
+
+    .data-card td input {
+      min-width: 36px;
+      padding: 2px 4px;
+      font-size: 10px;
+    }
+
+    .data-card td select.province-id {
+      min-width: 92px;
+      padding: 2px 3px;
+      font-size: 10px;
+    }
+
+    .data-card .remove {
+      padding: 1px 4px;
+      font-size: 10px;
+    }
+
+    /* TTS 设置卡：字号压小；内容放不下时出水平滚动条，
+       竖向滚动条固定预留槽位，信息不会再被它盖住。 */
+    .settings-card h2 {
+      font-size: 11px;
+    }
+
+    .settings-card .scroll-body {
+      overflow: auto;
+      scrollbar-gutter: stable;
+    }
+
+    .settings-card .scroll-body > * {
+      min-width: 280px;
+    }
+
+    .settings-card .field label {
+      font-size: 10px;
+    }
+
+    .settings-card input,
+    .settings-card select,
+    .settings-card textarea {
+      font-size: 10px;
+      padding: 3px 5px;
+    }
+
+    .settings-card .hint {
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    /* 预览卡：左列是竖屏预览图 + 图下方说明文字，右列是取景参数。
+       第一排高度由首屏决定，长度不够时整块自己出滚动条，不撑高第一排。 */
+    .preview-body {
+      display: flex;
+      flex: 1 1 auto;
+      /* 图与参数之间的横向间距压到最小，省下来的宽度都给预览图。 */
+      gap: 6px;
+      min-height: 0;
+      overflow: auto;
+      /* 滚动条出现时预留槽位，不会突然把右边的参数挤掉一截。 */
+      scrollbar-gutter: stable;
+    }
+
+    /* 预览图那一列：占卡片左侧一半以上。min-width 是预览图的保底宽度——
+       卡片再窄也不压这一列，改为让整块出现横向滚动条，图不会被挤小。 */
+    .preview-col {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      gap: 3px;
+      width: 56%;
+      min-width: 300px;
+    }
+
+    /* The full portrait canvas: the map is drawn full-bleed inside it. The SVG
+       letterboxes itself (`preserveAspectRatio`), so it always fits the room the
+       one-screen layout gives it — no fixed pixel height. 首屏时图占满整列高度，
+       说明文字被推到滚动区外，滚动才能看到。 */
     .preview {
       position: relative;
       display: flex;
+      flex: 0 0 auto;
       align-items: center;
       justify-content: center;
-      min-height: 560px;
+      width: 100%;
+      height: 100%;
+      min-height: 400px;
       background: radial-gradient(circle, #123a3b, #09191f 65%);
       border: 1px dashed #2a5b60;
-      border-radius: 10px;
+      border-radius: 8px;
     }
 
-    /* The full portrait canvas: the map is drawn full-bleed inside it. */
+    /* The full portrait canvas: the map is drawn full-bleed inside it. The SVG
+       letterboxes itself (`preserveAspectRatio`), so it always fits the room the
+       one-screen layout gives it — no fixed pixel height. */
     .map {
-      width: auto;
-      height: 88%;
-      max-height: 520px;
-      aspect-ratio: 1080 / 1920;
+      width: 100%;
+      height: 100%;
     }
 
     .map path {
@@ -301,52 +528,201 @@
       letter-spacing: 2px;
     }
 
+    /* 取景参数：放在预览图右边，一列一组「参数名 - 参数值」，字号再压小给图腾宽度。 */
     .framing-info {
-      margin-top: 14px;
-      font-size: 12px;
+      flex: 1 1 auto;
+      /* 参数列的最小宽度：低于它就不再继续压缩参数，交给外层横向滚动。 */
+      min-width: 260px;
+      overflow: auto;
+      font-size: 8px;
+      line-height: 1.28;
       color: #9dc2c0;
     }
 
     .framing-grid {
       display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 5px 10px;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 0 5px;
     }
 
     .framing-grid .k {
       color: #6f9b99;
+      white-space: nowrap;
+    }
+
+    .framing-grid .v {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .framing-warnings {
-      margin: 10px 0 0;
-      padding-left: 18px;
+      margin: 6px 0 0;
+      padding-left: 16px;
       color: #ffd18a;
     }
 
     .preview-title {
       position: absolute;
-      top: 25px;
-      right: 20px;
-      left: 20px;
-      font-size: 21px;
+      top: 10px;
+      right: 8px;
+      left: 8px;
+      font-size: 13px;
       font-weight: 700;
+      line-height: 1.25;
       text-align: center;
     }
 
+    /* 说明文字挪出预览框：竖屏预览里塞不下这段长句。 */
     .preview-note {
-      position: absolute;
-      bottom: 14px;
+      flex: 0 0 auto;
       color: #7ca5a4;
+      font-size: 9px;
+      line-height: 1.4;
+    }
+
+    /* 第二排：地图取景 : 生成音频与视频 = 4 : 3。 */
+    .card.row.actions {
+      display: grid;
+      grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
+      gap: 6px 18px;
+      align-items: start;
+    }
+
+    .card.row.actions > .framing-fields {
+      min-width: 0;
+    }
+
+    /* 「参数名：参数值」排在同一行；整块收窄，控件比之前窄 1/3 左右。 */
+    .card.row.actions .field-grid {
+      max-width: 760px;
+    }
+
+    .card.row.actions .field {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 6px;
+      margin: 4px 0;
+    }
+
+    .card.row.actions .field label {
+      margin: 0;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .card.row.actions input,
+    .card.row.actions select {
+      padding: 3px 5px;
+      font-size: 10px;
+    }
+
+    .card.row.actions .hint {
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    /* 生成区：主按钮与下载按钮同一排，下面依次是进度条、状态、生成结果。
+       生成完成后新增的下载按钮不再另起一行 —— 第二排高度不会被顶高、
+       也就不会把第一排挤窄。 */
+    .generate-box {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas:
+        "primary downloads"
+        "bar bar"
+        "status status"
+        "result result";
+      gap: 4px 10px;
+      align-items: center;
+      align-content: start;
+      min-width: 0;
+      padding-left: 14px;
+      border-left: 1px solid #21434a;
+    }
+
+    .generate-box > * {
+      width: auto;
+      max-width: none;
+    }
+
+    /* 按钮统一收小：主按钮只占内容宽度，不再撑满一列。 */
+    #generate {
+      grid-area: primary;
+      justify-self: start;
+      padding: 5px 12px;
       font-size: 12px;
     }
 
-    .wide {
+    .generate-box .downloads {
+      grid-area: downloads;
+      gap: 4px;
+      margin-bottom: 0;
+      min-width: 0;
+    }
+
+    .generate-box .download {
+      flex: 0 0 auto;
+      padding: 4px 8px;
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .generate-box .bar {
+      grid-area: bar;
+      width: 100%;
+    }
+
+    .generate-box .status {
+      grid-area: status;
+      width: 100%;
+      margin-top: 0;
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    /* 「生成完成 ✓」与细节信息：整行铺满但字号压小，尽量少占高度。 */
+    .generate-box .result {
+      grid-area: result;
+      width: 100%;
+      margin-top: 2px;
+      padding-top: 4px;
+    }
+
+    .generate-box .result strong {
+      font-size: 11px;
+    }
+
+    .generate-box .result-meta {
+      margin-top: 2px;
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    /* 第三排：完整文案，文本框在左、重算按钮在右。 */
+    .card.script-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px 12px;
+      align-items: end;
+      flex: none;
+    }
+
+    .card.script-row h2 {
       grid-column: 1 / -1;
+      margin-bottom: 0;
+    }
+
+    #script {
+      height: 88px;
+      min-height: 0;
+      resize: none;
+      line-height: 1.5;
     }
 
     .bar {
-      height: 8px;
-      margin-top: 15px;
+      flex: 0 0 auto;
+      height: 6px;
       overflow: hidden;
       background: #17343a;
       border-radius: 99px;
@@ -363,15 +739,16 @@
     .status,
     .hint,
     .result-meta {
-      margin-top: 8px;
+      margin-top: 4px;
       color: #8faeac;
-      font-size: 12px;
+      font-size: 11px;
+      line-height: 1.5;
     }
 
     .result {
       display: none;
-      margin-top: 18px;
-      padding-top: 14px;
+      margin-top: 6px;
+      padding-top: 6px;
       border-top: 1px solid #21434a;
     }
 
@@ -379,40 +756,64 @@
       display: none;
     }
 
-    .action-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-    }
+    /* 三列放不下就改成单列铺排，此时才允许整页滚动。 */
+    @media (max-width: 1180px) {
+      html,
+      body {
+        height: auto;
+      }
 
-    .action-row .primary {
-      flex: 1;
-      width: auto;
-    }
+      body {
+        overflow: auto;
+      }
 
-    .action-row .downloads {
-      flex-wrap: nowrap;
-      margin: 0;
-    }
-
-    @media (max-width: 1050px) {
       main {
         grid-template-columns: 1fr;
+        grid-template-rows: none;
+        height: auto;
       }
 
-      .wide {
-        grid-column: auto;
+      .card.top {
+        grid-row: auto;
+        min-height: 440px;
       }
 
-      .field-grid {
+      .card.row.actions {
         grid-template-columns: 1fr;
+      }
+
+      .card.row.actions .field-grid {
+        max-width: none;
+      }
+
+      .generate-box {
+        padding-left: 0;
+        border-left: 0;
+      }
+
+      .generate-box > * {
+        max-width: none;
       }
     }
 
     @media (max-width: 800px) {
-      .action-row .downloads {
-        flex-wrap: wrap;
+      .field-grid,
+      .field-grid.cols-3,
+      .field-grid.cols-4 {
+        grid-template-columns: 1fr;
+      }
+
+      .framing-grid {
+        grid-template-columns: auto minmax(0, 1fr);
+      }
+
+      .preview {
+        min-height: 320px;
+      }
+
+      .card.script-row {
+        grid-template-columns: 1fr;
+        align-items: stretch;
       }
     }
   </style>
@@ -424,8 +825,9 @@
   </header>
 
   <main>
-    <section class="card">
-      <h2>1 / 排名数据</h2>
+    <!-- 第一排：排名数据（最左，字体/按钮更小省出宽度）/ 地图取景预览（预览图在左、参数在右）/ 视频与 TTS 设置 -->
+    <section class="card top data-card">
+      <h2>1 / 排名数据 <span class="sub">选府 ID 自动带出两个名称</span></h2>
 
       <div class="toolbar">
         <button id="add" type="button">添加一行</button>
@@ -448,7 +850,7 @@
 
       <p class="link-hint">
         三列互通：选择府 ID 会自动带出英文名与泰文名；输入或选择泰文名（或英文名）
-        会自动回填府 ID 与另一列。候选来自 77 府边界数据，不用手打。
+        会自动回填府 ID 与另一列。
       </p>
 
       <div id="dataWarnings" class="data-warnings"></div>
@@ -470,227 +872,230 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card top preview-card">
       <h2>2 / 地图取景预览</h2>
 
-      <div class="preview">
-        <div id="previewTitle" class="preview-title">
-          THAILAND PROVINCE RANKING
+      <div class="preview-body">
+        <div class="preview-col">
+          <div class="preview">
+            <div id="previewTitle" class="preview-title">
+              THAILAND PROVINCE RANKING
+            </div>
+
+            <svg
+              id="previewMap"
+              class="map"
+              viewBox="0 0 1080 1920"
+              preserveAspectRatio="xMidYMid meet"
+              role="img"
+              aria-label="地图取景预览"
+            ></svg>
+          </div>
+
+          <div id="previewNote" class="preview-note">正在计算取景…</div>
         </div>
 
-        <svg
-          id="previewMap"
-          class="map"
-          viewBox="0 0 1080 1920"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="地图取景预览"
-        ></svg>
-
-        <div id="previewNote" class="preview-note">正在计算取景…</div>
+        <div id="framingInfo" class="framing-info"></div>
       </div>
-
-      <div id="framingInfo" class="framing-info"></div>
     </section>
 
-    <section class="card">
+    <section class="card top settings-card">
       <h2>3 / 视频与 TTS 设置</h2>
 
-      <div class="field">
-        <label for="title">视频标题</label>
-        <input id="title" value="THAILAND PROVINCE RANKING" />
-      </div>
-
-      <div class="field">
-        <label for="outputName">输出文件名</label>
-        <input id="outputName" value="thailand-province-ranking" />
-      </div>
-
-      <div class="field">
-        <label for="opening">开场白</label>
-        <textarea id="opening">ยินดีต้อนรับสู่การจัดอันดับข้อมูลระดับจังหวัดของประเทศไทย</textarea>
-      </div>
-
-      <div class="field">
-        <label for="ttsEngine">TTS 引擎</label>
-        <select id="ttsEngine" style="margin-bottom: 10px">
-          <option value="">正在检测 TTS 引擎…</option>
-        </select>
-
-        <label for="ttsModel">TTS 模型</label>
-        <select id="ttsModel" style="margin-bottom: 10px">
-          <option value="">请先选择引擎</option>
-        </select>
-
-        <label for="ttsLanguage">语言类型</label>
-        <select id="ttsLanguage" style="margin-bottom: 10px"><option value="auto">自动</option><option value="th">泰语</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select>
-
-        <label for="speaker">解说语音</label>
-        <select id="speaker">
-          <option value="">正在读取可用语音…</option>
-        </select>
-      </div>
-
-      <div id="ttsCapabilityNote" class="hint"></div>
-      <div id="ttsAdvanced" class="field-grid"></div>
-
-      <div class="field-grid">
+      <div class="scroll-body">
         <div class="field">
-          <label for="gap">各排名解说间隔（秒）</label>
-          <input
-            id="gap"
-            type="number"
-            min="0"
-            max="10"
-            step="0.1"
-            value="2"
-          />
+          <label for="title">视频标题</label>
+          <input id="title" value="THAILAND PROVINCE RANKING" />
         </div>
 
         <div class="field">
-          <label for="resolution">画幅</label>
-          <select id="resolution">
-            <option value="1080x1920">1080 × 1920（竖屏）</option>
-            <option value="1920x1080">1920 × 1080（横屏）</option>
-            <option value="1080x1080">1080 × 1080（方形）</option>
+          <label for="outputName">输出文件名</label>
+          <input id="outputName" value="thailand-province-ranking" />
+        </div>
+
+        <div class="field">
+          <label for="opening">开场白</label>
+          <textarea id="opening" rows="2">ยินดีต้อนรับสู่การจัดอันดับข้อมูลระดับจังหวัดของประเทศไทย</textarea>
+        </div>
+
+        <div class="field">
+          <label for="ttsEngine">TTS 引擎</label>
+          <select id="ttsEngine" style="margin-bottom: 6px">
+            <option value="">正在检测 TTS 引擎…</option>
+          </select>
+
+          <label for="ttsModel">TTS 模型</label>
+          <select id="ttsModel" style="margin-bottom: 6px">
+            <option value="">请先选择引擎</option>
+          </select>
+
+          <label for="ttsLanguage">语言类型</label>
+          <select id="ttsLanguage" style="margin-bottom: 6px"><option value="auto">自动</option><option value="th">泰语</option><option value="zh">中文</option><option value="en">英语</option><option value="ja">日语</option></select>
+
+          <label for="speaker">解说语音</label>
+          <select id="speaker">
+            <option value="">正在读取可用语音…</option>
           </select>
         </div>
 
-        <div class="field">
-          <label for="fps">帧率</label>
-          <select id="fps">
-            <option value="30">30</option>
-            <option value="60">60</option>
-            <option value="90">90</option>
-          </select>
+        <div id="ttsCapabilityNote" class="hint"></div>
+        <div id="ttsAdvanced" class="field-grid"></div>
+
+        <div class="field-grid">
+          <div class="field">
+            <label for="gap">各排名解说间隔（秒）</label>
+            <input
+              id="gap"
+              type="number"
+              min="0"
+              max="10"
+              step="0.1"
+              value="2"
+            />
+          </div>
+
+          <div class="field">
+            <label for="resolution">画幅</label>
+            <select id="resolution">
+              <option value="1080x1920">1080 × 1920（竖屏）</option>
+              <option value="1920x1080">1920 × 1080（横屏）</option>
+              <option value="1080x1080">1080 × 1080（方形）</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="fps">帧率</label>
+            <select id="fps">
+              <option value="30">30</option>
+              <option value="60">60</option>
+              <option value="90">90</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="ttsSpeed">解说语速（1.0 为正常）</label>
+            <input
+              id="ttsSpeed"
+              type="number"
+              min="0.25"
+              max="4"
+              step="0.05"
+              value="0.8"
+            />
+          </div>
         </div>
 
-        <div class="field">
-          <label for="ttsSpeed">解说语速（1.0 为正常速度）</label>
-          <input
-            id="ttsSpeed"
-            type="number"
-            min="0.25"
-            max="4"
-            step="0.05"
-            value="0.8"
-          />
-        </div>
+        <p class="hint">
+          WAV 的真实时长决定视频时长和 Timeline，目标时长无需手动设置。
+        </p>
       </div>
-
-      <p class="hint">
-        WAV 的真实时长决定视频时长和 Timeline，目标时长无需手动设置。
-      </p>
     </section>
 
-    
+    <!-- 第二排：地图取景控件 + 生成音频与视频（按钮在右） -->
+    <section class="card row actions">
+      <div class="framing-fields">
+        <h2>4 / 地图取景 <span class="sub">生成前一次性计算，全片固定镜头</span></h2>
 
-    <section class="card wide">
-      <h2>4 / 地图取景（生成前一次性计算，全片固定镜头）</h2>
+        <div class="field-grid">
+          <div class="field">
+            <label for="fitMode" title="fitMode">取景模式：</label>
+            <select id="fitMode">
+              <option value="data-driven">data-driven 数据自动取景（默认）</option>
+              <option value="full-country">full-country 完整国家地图</option>
+              <option value="manual">manual 手动指定中心与缩放</option>
+            </select>
+          </div>
 
-      <div class="field-grid">
-        <div class="field">
-          <label for="fitMode">取景模式 fitMode</label>
-          <select id="fitMode">
-            <option value="data-driven">data-driven 数据自动取景（默认）</option>
-            <option value="full-country">full-country 完整国家地图</option>
-            <option value="manual">manual 手动指定中心与缩放</option>
-          </select>
+          <div class="field">
+            <label for="framingPreset" title="framingPreset">取景松紧：</label>
+            <select id="framingPreset">
+              <option value="tight">tight 尽量放大重点区域</option>
+              <option value="balanced" selected>balanced 平衡（默认）</option>
+              <option value="wide">wide 展示更广地理范围</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="coverageThreshold" title="coverageThreshold">覆盖阈值：</label>
+            <input
+              id="coverageThreshold"
+              type="number"
+              min="0.25"
+              max="1"
+              step="0.05"
+              value="0.9"
+            />
+          </div>
+
+          <div class="field">
+            <label for="strictCoverage" title="strictCoverage">严格覆盖：</label>
+            <select id="strictCoverage">
+              <option value="false">关闭</option>
+              <option value="true">开启（覆盖不足时告警）</option>
+            </select>
+          </div>
         </div>
 
-        <div class="field">
-          <label for="framingPreset">取景松紧 framingPreset</label>
-          <select id="framingPreset">
-            <option value="tight">tight 尽量放大重点区域</option>
-            <option value="balanced" selected>balanced 平衡（默认）</option>
-            <option value="wide">wide 展示更广地理范围</option>
-          </select>
+        <div id="manualFraming" class="field-grid cols-3" style="display: none">
+          <div class="field">
+            <label for="manualLon" title="manualCenter.lon">中心经度：</label>
+            <input id="manualLon" type="number" step="0.001" value="100.5" />
+          </div>
+
+          <div class="field">
+            <label for="manualLat" title="manualCenter.lat">中心纬度：</label>
+            <input id="manualLat" type="number" step="0.001" value="13.5" />
+          </div>
+
+          <div class="field">
+            <label for="manualZoom" title="manualZoom">缩放 zoom：</label>
+            <input id="manualZoom" type="number" step="0.1" value="8" />
+          </div>
         </div>
 
-        <div class="field">
-          <label for="coverageThreshold">覆盖阈值 coverageThreshold</label>
-          <input
-            id="coverageThreshold"
-            type="number"
-            min="0.25"
-            max="1"
-            step="0.05"
-            value="0.9"
-          />
-        </div>
-
-        <div class="field">
-          <label for="strictCoverage">严格覆盖 strictCoverage</label>
-          <select id="strictCoverage">
-            <option value="false">关闭</option>
-            <option value="true">开启（覆盖不足时告警）</option>
-          </select>
-        </div>
+        <p class="hint">
+          覆盖阈值按“排名区域数量”计算（一个排名项 = 一份权重，避免大府主导取景）。
+          离群区域允许落在画面之外，但排名、解说与数据都不会被删除。
+        </p>
       </div>
 
-      <div id="manualFraming" class="field-grid" style="display: none">
-        <div class="field">
-          <label for="manualLon">中心经度</label>
-          <input id="manualLon" type="number" step="0.001" value="100.5" />
-        </div>
-
-        <div class="field">
-          <label for="manualLat">中心纬度</label>
-          <input id="manualLat" type="number" step="0.001" value="13.5" />
-        </div>
-
-        <div class="field">
-          <label for="manualZoom">zoom</label>
-          <input id="manualZoom" type="number" step="0.1" value="8" />
-        </div>
-      </div>
-
-      <p class="hint">
-        覆盖阈值按“排名区域数量”计算（一个排名项 = 一份权重，避免大府主导取景）。
-        自动取景会优先保证该比例的排名区域进入画面，离群区域允许落在画面之外，
-        但排名、解说与数据都不会被删除。
-      </p>
-    </section>
-
-    <section class="card wide">
-      <div class="action-row">
+      <div class="generate-box">
         <button id="generate" class="primary" type="button">
           生成音频与视频
         </button>
+
+        <div class="bar">
+          <i id="bar"></i>
+        </div>
+
+        <div id="status" class="status">等待录入数据</div>
 
         <div id="downloads" class="downloads" style="display: none">
           <a id="wavDownload" class="download">下载音频 WAV</a>
           <a id="timelineDownload" class="download">下载 Timeline</a>
           <a id="mp4Download" class="download">下载 MP4 视频</a>
         </div>
+
+        <div id="result" class="result">
+          <strong>生成完成 ✓</strong>
+          <div id="resultMeta" class="result-meta"></div>
+        </div>
       </div>
-
-      <div class="bar">
-        <i id="bar"></i>
-      </div>
-
-      <div id="status" class="status">等待录入数据</div>
-
-      <div id="result" class="result">
-        <strong>生成完成 ✓</strong>
-        <div id="resultMeta" class="result-meta"></div>
-      </div>
-    </section>
-
-    <section class="card wide">
-      <h2>5 / 将要生成的完整音频文案</h2>
-
-      <textarea id="script" rows="10"></textarea>
-
-      <div class="toolbar" style="margin-top: 10px">
-        <button id="refreshScript" type="button">
-          根据开场白和排名重新生成文案
-        </button>
-      </div>
-
-      <p class="hint">可直接编辑；重新生成会覆盖当前文本。</p>
     </section>
   </main>
+
+  <!-- 第三排：将要生成的完整文案。放在 main 外面，首屏在视口外，滚一下才看到 -->
+  <div class="script-wrap">
+    <section class="card script-row">
+      <h2>5 / 将要生成的完整音频文案 <span class="sub">可直接编辑；重新生成会覆盖当前文本</span></h2>
+
+      <textarea id="script" rows="4"></textarea>
+
+      <button id="refreshScript" type="button">
+        根据开场白和排名重新生成文案
+      </button>
+    </section>
+  </div>
 
   <script>
     const sample = [
@@ -903,12 +1308,13 @@
           y1 - y0
         }"></rect>` +
         `<text class="band-label" x="28" y="${band.y0 - 16}">标题区（地图从这条线以下开始）</text>` +
-        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图垫在其后）</text>`;
+        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束）</text>`;
 
       $("#previewNote").textContent =
         `固定镜头 · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
-        `${viewport.zoom.toFixed(2)}；地图铺满整幅画布并避开标题区，暗色为标题/页脚遮盖带，` +
-        `虚线为取景框，点线为浮动标签安全区`;
+        `${viewport.zoom.toFixed(2)}；地图横向铺满，上下避开标题区与页脚区（` +
+        `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
+        `暗色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区`;
       $("#framingInfo").innerHTML = renderFramingInfo(viewport);
     };
 
