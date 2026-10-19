@@ -528,6 +528,122 @@
       letter-spacing: 2px;
     }
 
+    /* 平台 UI 安全区遮罩（仅开发预览存在；成片永远不含遮罩，见
+       src/video/components/SafeAreaOverlay.tsx 的开关）。外部半透明压暗，
+       核心安全区实线，标签安全区点线，右侧互动栏禁入区用橙红区分。 */
+    .map rect.safe-mask {
+      fill: rgba(4, 10, 14, 0.58);
+    }
+
+    .map rect.safe-map-area {
+      fill: none;
+      stroke: rgba(41, 229, 210, 0.28);
+      stroke-width: 2;
+      stroke-dasharray: 10 8;
+    }
+
+    .map rect.safe-core {
+      fill: none;
+      stroke: #29e5d2;
+      stroke-width: 3;
+    }
+
+    .map rect.safe-label {
+      fill: none;
+      stroke: rgba(41, 229, 210, 0.75);
+      stroke-width: 2;
+      stroke-dasharray: 6 6;
+    }
+
+    .map rect.safe-keepout {
+      fill: rgba(255, 138, 92, 0.18);
+      stroke: #ff8a5c;
+      stroke-width: 3;
+    }
+
+    .map rect.safe-keepout-gap {
+      fill: none;
+      stroke: #ff8a5c;
+      stroke-width: 1.5;
+      stroke-dasharray: 4 6;
+      opacity: 0.85;
+    }
+
+    .map text.safe-caption {
+      fill: #d8f7f2;
+      font-size: 24px;
+      letter-spacing: 1px;
+    }
+
+    .map text.safe-caption.warn {
+      fill: #ff8a5c;
+    }
+
+    /* 第三排多张卡之间留缝。 */
+    .script-wrap .card + .card {
+      margin-top: 8px;
+    }
+
+    /* 发布设置（安全区）：平台 / 发布描述 / 遮罩开关。 */
+    .publish-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr) minmax(0, 1fr);
+      gap: 6px 12px;
+      align-items: start;
+    }
+
+    .publish-grid .field {
+      margin: 0;
+    }
+
+    .publish-grid label {
+      font-size: 11px;
+    }
+
+    .publish-grid select,
+    .publish-grid textarea {
+      font-size: 11px;
+    }
+
+    .safe-area-info {
+      margin-top: 6px;
+      max-height: 200px;
+      overflow: auto;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #9dc2c0;
+    }
+
+    .safe-area-info .safe-grid {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+      gap: 0 10px;
+    }
+
+    .safe-area-info .k {
+      color: #6f9b99;
+      white-space: nowrap;
+    }
+
+    .safe-area-info .v {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .safe-area-info ul {
+      margin: 4px 0 0;
+      padding-left: 16px;
+      color: #ffd18a;
+    }
+
+    .safe-area-info ul.ok {
+      color: #7ee0c8;
+    }
+
+    .safe-area-info ul.hint-list {
+      color: #9dc2c0;
+    }
+
     /* 取景参数：放在预览图右边，一列一组「参数名 - 参数值」，字号再压小给图腾宽度。 */
     .framing-info {
       flex: 1 1 auto;
@@ -1084,7 +1200,7 @@
     </section>
   </main>
 
-  <!-- 第三排：将要生成的完整文案。放在 main 外面，首屏在视口外，滚一下才看到 -->
+  <!-- 第三排：完整文案 + 发布设置。放在 main 外面，首屏在视口外，滚一下才看到 -->
   <div class="script-wrap">
     <section class="card script-row">
       <h2>5 / 将要生成的完整音频文案 <span class="sub">可直接编辑；重新生成会覆盖当前文本</span></h2>
@@ -1094,6 +1210,48 @@
       <button id="refreshScript" type="button">
         根据开场白和排名重新生成文案
       </button>
+    </section>
+
+    <!-- 发布设置：平台 UI 安全区。只决定取景视野与文字避让，不改变任何动画。
+         这里填的是【发布描述】（标题 / 话题标签），与上面视频内文案是两回事。 -->
+    <section class="card publish-row">
+      <h2>
+        6 / 发布设置（平台 UI 安全区）
+        <span class="sub"
+          >TikTok 与抖音各自独立；参数为工程初始估值，待真机截图校准</span
+        >
+      </h2>
+
+      <div class="publish-grid">
+        <div class="field">
+          <label for="publishPlatform" title="platform">发布平台：</label>
+          <select id="publishPlatform">
+            <option value="tiktok">TikTok</option>
+            <option value="douyin">抖音</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="publishDescription" title="publishDescription"
+            >发布描述（标题 / 话题标签，与视频内文案分开）：</label
+          >
+          <textarea
+            id="publishDescription"
+            rows="3"
+            placeholder="留空 = short 档（底部预留最小）；字符数决定 short / medium / long"
+          ></textarea>
+        </div>
+
+        <div class="field">
+          <label for="safeAreaPreview" title="debugSafeArea">安全区预览遮罩：</label>
+          <select id="safeAreaPreview">
+            <option value="false" selected>关闭（成片永远不含遮罩）</option>
+            <option value="true">在地图预览上显示</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="safeAreaInfo" class="safe-area-info"></div>
     </section>
   </div>
 
@@ -1201,6 +1359,216 @@
         manual: "手动取景",
       })[mode] || mode;
 
+    /** 发布平台 + 发布描述（安全区用）。与视频内文案无关。 */
+    const safeAreaState = () => ({
+      platform: $("#publishPlatform").value,
+      publishDescription: $("#publishDescription").value.trim(),
+    });
+
+    const safeAreaPreviewEnabled = () => $("#safeAreaPreview").value === "true";
+
+    /** 安全区坐标画在 1080x1920 画布上；预览 viewBox 不同则等比换算。 */
+    const scaleSafeRect = (rect, from, to) => {
+      const sx = from.width > 0 ? to.width / from.width : 1;
+      const sy = from.height > 0 ? to.height / from.height : 1;
+      return {
+        x0: rect.x0 * sx,
+        y0: rect.y0 * sy,
+        x1: rect.x1 * sx,
+        y1: rect.y1 * sy,
+      };
+    };
+
+    /**
+     * 安全区可视化（**仅预览**）：安全区外部半透明压暗 + 核心安全区实线 +
+     * 标签安全区点线 + 右侧互动栏禁入区橙红。成片不含这些内容 —— 渲染端只在
+     * `debugSafeArea` 显式为 true 时才画，而生成请求从不设置它。
+     */
+    const safeAreaOverlaySvg = (safeArea, stage) => {
+      if (!safeArea) return "";
+      const from = safeArea.canvas;
+      const box = (rect) => {
+        const scaled = scaleSafeRect(rect, from, stage);
+        return {
+          x: scaled.x0,
+          y: scaled.y0,
+          width: Math.max(0, scaled.x1 - scaled.x0),
+          height: Math.max(0, scaled.y1 - scaled.y0),
+        };
+      };
+      const margins = {
+        top: (safeArea.margins.top / from.height) * stage.height,
+        bottom: (safeArea.margins.bottom / from.height) * stage.height,
+        left: (safeArea.margins.left / from.width) * stage.width,
+        right: (safeArea.margins.right / from.width) * stage.width,
+      };
+      const rectAttrs = (rect) => {
+        const b = box(rect);
+        return `x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"`;
+      };
+      const core = box(safeArea.coreRect);
+      const parts = [
+        `<rect class="safe-mask" x="0" y="0" width="${stage.width}" height="${margins.top}"></rect>`,
+        `<rect class="safe-mask" x="0" y="${stage.height - margins.bottom}" width="${
+          stage.width
+        }" height="${margins.bottom}"></rect>`,
+        `<rect class="safe-mask" x="0" y="${margins.top}" width="${margins.left}" height="${
+          stage.height - margins.top - margins.bottom
+        }"></rect>`,
+        `<rect class="safe-mask" x="${stage.width - margins.right}" y="${
+          margins.top
+        }" width="${margins.right}" height="${
+          stage.height - margins.top - margins.bottom
+        }"></rect>`,
+        `<rect class="safe-map-area" ${rectAttrs(safeArea.mapRect)}></rect>`,
+        `<rect class="safe-core" ${rectAttrs(safeArea.coreRect)}></rect>`,
+        `<rect class="safe-label" ${rectAttrs(safeArea.labelRect)}></rect>`,
+      ];
+
+      if (safeArea.interactiveRect) {
+        parts.push(
+          `<rect class="safe-keepout" ${rectAttrs(safeArea.interactiveRect)}></rect>`,
+        );
+      }
+      if (safeArea.interactiveGapRect) {
+        parts.push(
+          `<rect class="safe-keepout-gap" ${rectAttrs(
+            safeArea.interactiveGapRect,
+          )}></rect>`,
+        );
+      }
+
+      const caption = (x, y, text, warn) =>
+        `<text class="safe-caption${warn ? " warn" : ""}" x="${x}" y="${y}">${escapeHtml(
+          text,
+        )}</text>`;
+
+      parts.push(
+        caption(
+          core.x + 8,
+          Math.max(28, core.y - 12),
+          `核心安全区 ${Math.round(safeArea.coreRect.x0)}~${Math.round(
+            safeArea.coreRect.x1,
+          )} × ${Math.round(safeArea.coreRect.y0)}~${Math.round(safeArea.coreRect.y1)}`,
+        ),
+        caption(
+          core.x + 8,
+          core.y + core.height - 12,
+          `标签安全区（含 ${safeArea.contentGapPx}px 间距）`,
+        ),
+        caption(
+          28,
+          Math.max(28, margins.top - 14),
+          `顶部预留 ${safeArea.margins.top}px`,
+        ),
+        caption(
+          28,
+          stage.height - margins.bottom + 40,
+          `底部预留 ${safeArea.margins.bottom}px（${safeArea.descriptionTier} · ${safeArea.descriptionChars} 字符）`,
+        ),
+      );
+
+      if (safeArea.interactiveRect) {
+        const keep = box(safeArea.interactiveRect);
+        parts.push(
+          caption(
+            keep.x + 6,
+            keep.y + 34,
+            `互动栏禁入区 ${Math.round(safeArea.interactiveRect.x0)},${Math.round(
+              safeArea.interactiveRect.y0,
+            )} ${Math.round(
+              safeArea.interactiveRect.x1 - safeArea.interactiveRect.x0,
+            )}×${Math.round(
+              safeArea.interactiveRect.y1 - safeArea.interactiveRect.y0,
+            )}`,
+            true,
+          ),
+        );
+      }
+
+      return parts.join("");
+    };
+
+    /** 安全区面板：坐标、预留、来源与检查结果。 */
+    const renderSafeAreaInfo = (safeArea, labelAudit) => {
+      const host = $("#safeAreaInfo");
+      if (!host) return;
+      if (!safeArea) {
+        host.innerHTML = "";
+        return;
+      }
+      const rect = (value) =>
+        `${Math.round(value.x0)}~${Math.round(value.x1)} × ${Math.round(
+          value.y0,
+        )}~${Math.round(value.y1)}`;
+      const rows = [
+        [
+          "平台 / 版本",
+          `${safeArea.platformLabel}（${safeArea.platform}）· 配置 ${safeArea.version}${
+            safeArea.verified ? "" : " · 待真机校准"
+          }`,
+        ],
+        [
+          "发布描述 → 等级",
+          `${safeArea.descriptionChars} 字符 → ${safeArea.descriptionTier}（底部预留 ${
+            safeArea.margins.bottom
+          }px，来自${safeArea.bottomSource === "platform" ? "平台覆盖" : "等级配置"}）`,
+        ],
+        [
+          "四边预留",
+          `上 ${safeArea.margins.top} / 下 ${safeArea.margins.bottom} / 左 ${
+            safeArea.margins.left
+          } / 右 ${safeArea.margins.right}（间距 ${safeArea.contentGapPx}px）`,
+        ],
+        ["核心安全区", rect(safeArea.coreRect)],
+        ["标签安全区", rect(safeArea.labelRect)],
+        ["地图底图可用区", rect(safeArea.mapRect)],
+        [
+          "互动栏禁入区",
+          safeArea.interactiveRect ? rect(safeArea.interactiveRect) : "未配置",
+        ],
+        [
+          "参数来源",
+          `${safeArea.provenance === "initial-estimate" ? "工程初始估值（非平台官方规范）" : safeArea.provenance}`,
+        ],
+      ];
+
+      const warnings = safeArea.warnings || [];
+      const auditLines = labelAudit
+        ? (labelAudit.issues || []).map((issue) => issue.detail)
+        : [];
+      // 成片同一时刻只显示一个排名标签，所以相邻府的标签"潜在重叠"只是提示。
+      const hintLines = labelAudit
+        ? (labelAudit.overlaps || []).map(
+            (issue) =>
+              `潜在标签重叠（同屏才发生，成片每个时刻只显示一个标签）：${issue.detail}`,
+          )
+        : [];
+      const all = [...warnings, ...auditLines];
+
+      host.innerHTML =
+        `<div class="safe-grid">` +
+        rows
+          .map(
+            ([key, value]) =>
+              `<span class="k">${escapeHtml(key)}</span><span class="v">${escapeHtml(
+                value,
+              )}</span>`,
+          )
+          .join("") +
+        `</div>` +
+        (all.length
+          ? `<ul>${all.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+          : `<ul class="ok"><li>安全区检查通过：${
+              labelAudit ? `${labelAudit.checkedElements} 个元素` : "未运行"
+            }均在安全区内（右侧互动栏与底部预留已避开）</li></ul>`) +
+        (hintLines.length
+          ? `<ul class="hint-list">${hintLines
+              .map((line) => `<li>${escapeHtml(line)}</li>`)
+              .join("")}</ul>`
+          : "");
+    };
+
     const renderFramingInfo = (viewport) => {
       const rows = [
         [
@@ -1263,7 +1631,7 @@
     const describeIds = (ids) =>
       ids.map((id) => `${id}${provinceNames[id] ? ` ${provinceNames[id]}` : ""}`).join("、");
 
-    const drawFramingPreview = ({ viewport, paths, provinces, audit }) => {
+    const drawFramingPreview = ({ viewport, paths, provinces, audit, safeArea, labelAudit }) => {
       provinceNames = Object.fromEntries(
         paths.map((item) => [item.id, item.name || ""]),
       );
@@ -1308,14 +1676,28 @@
           y1 - y0
         }"></rect>` +
         `<text class="band-label" x="28" y="${band.y0 - 16}">标题区（地图从这条线以下开始）</text>` +
-        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束）</text>`;
+        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束）</text>` +
+        // 安全区遮罩只在这里（网页预览）出现，且只有开关打开时才画。
+        (safeAreaPreviewEnabled() && safeArea
+          ? safeAreaOverlaySvg(safeArea, viewport.stage)
+          : "");
+
+      const platformNote = safeArea
+        ? `；平台 ${safeArea.platformLabel}（${safeArea.descriptionTier} 描述，底部预留 ${
+            safeArea.margins.bottom
+          }px，右侧互动栏 ${
+            safeArea.interactiveRect ? safeArea.margins.right : 0
+          }px 已避开${safeAreaPreviewEnabled() ? "，安全区遮罩已显示" : ""}）`
+        : "";
 
       $("#previewNote").textContent =
         `固定镜头 · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
         `${viewport.zoom.toFixed(2)}；地图横向铺满，上下避开标题区与页脚区（` +
         `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
-        `暗色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区`;
+        `暗色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区` +
+        platformNote;
       $("#framingInfo").innerHTML = renderFramingInfo(viewport);
+      renderSafeAreaInfo(safeArea, labelAudit);
     };
 
     async function refreshFramingPreview() {
@@ -1325,7 +1707,12 @@
         const response = await fetch("/api/framing/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json; charset=UTF-8" },
-          body: JSON.stringify({ rankings: data, framing: framingState() }),
+          body: JSON.stringify({
+            rankings: data,
+            framing: framingState(),
+            // 平台与发布描述决定安全区，进而决定取景视野与标签避让。
+            ...safeAreaState(),
+          }),
         });
 
         const payload = await readJson(response);
@@ -1946,6 +2333,17 @@
       });
     });
 
+    // 发布平台 / 发布描述 / 安全区遮罩开关：改了立即重算取景预览（含安全区）。
+    ["#publishPlatform", "#publishDescription", "#safeAreaPreview"].forEach(
+      (selector) => {
+        const element = $(selector);
+        if (!element) return;
+        ["change", "input"].forEach((eventName) => {
+          element.addEventListener(eventName, scheduleFramingPreview);
+        });
+      },
+    );
+
     $("#title").addEventListener("input", (event) => {
       $("#previewTitle").textContent = event.target.value;
     });
@@ -2062,6 +2460,9 @@
           fps: Number($("#fps").value),
           resolution: $("#resolution").value,
           framing: framingState(),
+          // 发布平台 + 发布描述（安全区）。描述只用来选 short/medium/long 档；
+          // 视频内部文字与动画完全不变，成片也不含调试遮罩。
+          ...safeAreaState(),
           rankings: data,
         };
 
@@ -2084,6 +2485,10 @@
         setStatus("WAV、Timeline 与 MP4 已准备完毕", 100);
         $("#result").style.display = "block";
         $("#downloads").style.display = "flex";
+
+        // 这次成片实际用的安全区（与 timeline 文件里记录的一致），
+        // 连同标签/文字的越界检查结果一起显示。
+        renderSafeAreaInfo(result.safeArea, result.safeAreaAudit);
 
         const producedSeconds = Number(
           result.totalDuration ?? result.duration,

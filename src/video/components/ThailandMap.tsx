@@ -5,6 +5,7 @@ import type {ProjectData, RankingDatum, ThailandGeoJson} from '../../types';
 import {theme} from '../../config/theme';
 import {createProjection} from '../../framing/resolveViewport';
 import type {FramingRect, FramingViewport} from '../../framing/resolveViewport';
+import {LABEL_BOX, placeLabel} from '../layout/labelPlacement';
 
 type Props = {
   geojson: ThailandGeoJson;
@@ -20,59 +21,11 @@ type Props = {
   framing: FramingViewport;
 };
 
-const LABEL_WIDTH = 285;
-const LABEL_HEIGHT = 105;
-const LABEL_OFFSET_X = 75;
-const LABEL_OFFSET_Y = 112;
-const EDGE_MARGIN = 10;
-
-const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const LABEL_WIDTH = LABEL_BOX.width;
+const LABEL_HEIGHT = LABEL_BOX.height;
 
 /** Ranking ids and GeoJSON ids are matched on a normalised key, never on names. */
 const idKey = (value: unknown) => String(value ?? '').trim().toUpperCase();
-
-/**
- * Places the floating label and its leader line.
- *
- * The anchor sits on the highlighted province (clamped into the framing rect);
- * the panel is placed inside `panelBounds`, the band the title header and the
- * footer do not cover. When the auto-framing leaves the highlighted province
- * outside the viewport, the marker sticks to the closest frame edge and points
- * towards the province: that is the off-frame direction hint, and it needs no
- * camera movement.
- */
-const placeLabel = (cx: number, cy: number, rect: FramingRect, panelBounds: FramingRect) => {
-  const anchorX = clamp(cx, rect.x0 + EDGE_MARGIN, rect.x1 - EDGE_MARGIN);
-  const anchorY = clamp(cy, rect.y0 + EDGE_MARGIN, rect.y1 - EDGE_MARGIN);
-  // The panel lives in `panelBounds`: the part of the canvas the header and the
-  // footer do not cover, so framing can use the full height without burying the
-  // label under an overlay.
-  const panelMinX = panelBounds.x0 + EDGE_MARGIN;
-  const panelMaxX = Math.max(panelMinX, panelBounds.x1 - LABEL_WIDTH - EDGE_MARGIN);
-  const flip = anchorX + LABEL_OFFSET_X + LABEL_WIDTH > panelMaxX;
-  const panelX = clamp(
-    flip ? anchorX - LABEL_OFFSET_X - LABEL_WIDTH : anchorX + LABEL_OFFSET_X,
-    panelMinX,
-    panelMaxX,
-  );
-  const panelY = clamp(
-    anchorY - LABEL_OFFSET_Y,
-    panelBounds.y0,
-    Math.max(panelBounds.y0, panelBounds.y1 - LABEL_HEIGHT),
-  );
-  const towardsRight = panelX >= anchorX;
-
-  return {
-    anchor: [anchorX, anchorY] as [number, number],
-    panel: [panelX, panelY] as [number, number],
-    line: [
-      anchorX + 10 * (towardsRight ? 1 : -1),
-      anchorY - 5,
-      towardsRight ? panelX : panelX + LABEL_WIDTH,
-      clamp(anchorY - 55, panelY, panelY + LABEL_HEIGHT),
-    ] as [number, number, number, number],
-  };
-};
 
 export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, active, revealStart, framing}) => {
   const frame = useCurrentFrame();
@@ -94,13 +47,17 @@ export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, acti
   const activeFeature = active
     ? renderedFeatures.find((feature) => feature.id === idKey(active.provinceId))
     : undefined;
+  // The anchor may sit anywhere the base map reaches (it marks a real province);
+  // the panel itself is confined to the safe label area and is pushed out of the
+  // platform's right-hand action rail when one is configured.
   const label = activeFeature
-    ? placeLabel(
-        activeFeature.center[0],
-        activeFeature.center[1],
-        framing.rect,
-        framing.labelRect,
-      )
+    ? placeLabel({
+        cx: activeFeature.center[0],
+        cy: activeFeature.center[1],
+        rect: framing.mapRect ?? framing.rect,
+        panelBounds: framing.labelRect,
+        keepOut: framing.keepOutRect ?? null,
+      })
     : null;
 
   return <svg

@@ -68,6 +68,35 @@ export const labelRectFor = (stage: FramingStage): FramingRect => ({
   y1: Math.max(MAP_OVERLAY_BANDS.top, stage.height - MAP_OVERLAY_BANDS.bottom),
 });
 
+/**
+ * Platform UI safe area, already resolved by `src/safearea/safeArea.ts`.
+ *
+ * It is passed in as **plain rectangles** on purpose: this module stays
+ * dependency-free (Node can execute it directly, and the dev server, the
+ * preview and the render all load the same file), and the safe-area module owns
+ * every rule about margins, description tiers and the interactive keep-out.
+ *
+ * - `mapRect`   the area the *base map* is fitted into. The base map may run to
+ *               the canvas edge horizontally, but it stops above the platform's
+ *               bottom caption/description area so a ranked province is never
+ *               buried under it.
+ * - `labelRect` the area floating labels may occupy. Titles, rank numbers,
+ *               province names and legend text all live inside it, away from
+ *               the status bar, the right-hand action rail and the caption.
+ */
+export type FramingSafeArea = {
+  mapRect?: FramingRect;
+  labelRect?: FramingRect;
+  /**
+   * The platform's right-hand action rail (avatar / like / comment / share),
+   * already widened by the configured content gap. Floating rank labels are
+   * pushed out of it; the base map itself may extend into it.
+   */
+  keepOutRect?: FramingRect | null;
+  /** Safe-area diagnostics merged into `viewport.warnings`. */
+  warnings?: string[];
+};
+
 const MIN_RECT_SIZE = 80;
 const WEB_MERCATOR_TILE_SIZE = 256;
 const DEFAULT_CENTER: [number, number] = [100.5, 15];
@@ -194,6 +223,13 @@ export type FramingViewport = {
   diagnostics: FramingDiagnostic[];
   /** Zoom the whole country would need at this stage — the readable baseline. */
   referenceZoom: number;
+  /**
+   * Platform UI keep-out (right-hand action rail), present only when a safe area
+   * was supplied. The map component keeps floating labels out of it.
+   */
+  keepOutRect?: FramingRect | null;
+  /** The base-map area when a platform safe area was supplied. */
+  mapRect?: FramingRect;
 };
 
 export type FramingFeature = {
@@ -347,16 +383,32 @@ const normalizeStage = (
   return {width, height};
 };
 
-/** Authored rect (no preset padding): the full canvas minus the edge safety. */
-const authorRect = (stage: FramingStage): FramingRect => ({
-  x0: MAP_SAFE_INSET.left,
-  y0: MAP_SAFE_INSET.top,
-  x1: stage.width - MAP_SAFE_INSET.right,
-  y1: stage.height - MAP_SAFE_INSET.bottom,
-});
+/**
+ * Authored rect (no preset padding): the full canvas minus the edge safety.
+ *
+ * When a platform safe area is supplied, its `mapRect` replaces the built-in
+ * bands — the map is fitted into the room the app's own UI leaves free. Width
+ * is still allowed to run to the canvas edge (a base map may be cropped), while
+ * top/bottom follow the platform's status bar and caption area.
+ */
+const authorRect = (stage: FramingStage, override?: FramingRect): FramingRect => {
+  if (override) {
+    return {
+      x0: clamp(override.x0, 0, stage.width),
+      y0: clamp(override.y0, 0, stage.height),
+      x1: clamp(override.x1, 0, stage.width),
+      y1: clamp(override.y1, 0, stage.height),
+    };
+  }
+  return {
+    x0: MAP_SAFE_INSET.left,
+    y0: MAP_SAFE_INSET.top,
+    x1: stage.width - MAP_SAFE_INSET.right,
+    y1: stage.height - MAP_SAFE_INSET.bottom,
+  };
+};
 
-const insetRect = (stage: FramingStage, padding: number, warnings: string[]): FramingRect => {
-  const base = authorRect(stage);
+const insetRect = (base: FramingRect, padding: number, warnings: string[]): FramingRect => {
   const span = Math.min(base.x1 - base.x0, base.y1 - base.y0);
   let extra = Math.round(clamp(padding, 0, 0.3) * span);
   const maxExtra = Math.max(0, Math.floor((span - MIN_RECT_SIZE) / 2));
@@ -585,10 +637,14 @@ const selectFramed = (
 
 const viewportCache = new WeakMap<object, Map<string, FramingViewport>>();
 
+const rectKey = (rect: FramingRect | undefined): string =>
+  rect ? `${rect.x0},${rect.y0},${rect.x1},${rect.y1}` : '-';
+
 const cacheKey = (
   ids: string[],
   options: ResolvedFramingOptions,
   stage: FramingStage,
+  safe: FramingSafeArea | undefined,
 ): string =>
   [
     options.fitMode,
@@ -601,6 +657,8 @@ const cacheKey = (
     options.manualCenter ? options.manualCenter.join(',') : '-',
     options.manualZoom ?? '-',
     `${stage.width}x${stage.height}`,
+    rectKey(safe?.mapRect),
+    rectKey(safe?.labelRect),
     ids.join(','),
   ].join('|');
 
@@ -611,17 +669,20 @@ const cacheKey = (
  * @param provinceIds  `provinceId` of every ranking entry, in ranking order.
  * @param rawOptions   User configuration (`project.framing` / request body).
  * @param stage        Map container size in SVG user units.
+ * @param safe         Resolved platform UI safe area (optional). Omit it and the
+ *                     built-in bands apply — identical to the previous behaviour.
  */
 export const resolveViewport = (
   geojson: FramingGeoJson,
   provinceIds: string[],
   rawOptions?: unknown,
   stage?: FramingStage,
+  safe?: FramingSafeArea,
 ): FramingViewport => {
   const {options, warnings} = normalizeFramingOptions(rawOptions);
   const safeStage = normalizeStage(stage, warnings);
   const ids = (Array.isArray(provinceIds) ? provinceIds : []).map(normalizeId);
-  const key = cacheKey(ids, options, safeStage);
+  const key = cacheKey(ids, options, safeStage, safe);
   // Non-canonical input is never cached: two different raw values that normalise
   // to the same options must still surface their own warnings.
   const cacheable = warnings.length === 0;
@@ -630,8 +691,18 @@ export const resolveViewport = (
   const cached = cacheable ? bucket?.get(key) : undefined;
   if (cached) return cached;
 
-  const rect = insetRect(safeStage, options.padding, warnings);
-  const authoredRect = authorRect(safeStage);
+  // The base map is fitted into the platform's free area when a safe area is
+  // supplied; otherwise the built-in title/footer bands apply (unchanged).
+  const authoredRect = authorRect(safeStage, safe?.mapRect);
+  const rect = insetRect(authoredRect, options.padding, warnings);
+  const safeLabelRect = safe?.labelRect
+    ? {
+        x0: clamp(safe.labelRect.x0, 0, safeStage.width),
+        y0: clamp(safe.labelRect.y0, 0, safeStage.height),
+        x1: clamp(safe.labelRect.x1, 0, safeStage.width),
+        y1: clamp(safe.labelRect.y1, 0, safeStage.height),
+      }
+    : labelRectFor(safeStage);
   const index = buildGeoIndex(geojson);
 
   /* 1. ranking entries → GeoJSON features (stable id matching, never by name) */
@@ -796,7 +867,7 @@ export const resolveViewport = (
 
   /* 5. reference zoom (whole country at this stage) — the readability baseline */
   const referenceScale =
-    safeStage.width === MAP_STAGE.width && safeStage.height === MAP_STAGE.height
+    !safe?.mapRect && safeStage.width === MAP_STAGE.width && safeStage.height === MAP_STAGE.height
       ? index.referenceScale
       : fitWholeCountry(authoredRect).scale();
 
@@ -808,6 +879,13 @@ export const resolveViewport = (
       : [...DEFAULT_CENTER];
 
   const translate = projection.translate();
+
+  // Safe-area diagnostics travel with the viewport, so the generation log and the
+  // UI show the same warnings as the framing ones.
+  (safe?.warnings ?? []).forEach((warning) => {
+    if (!warnings.includes(warning)) warnings.push(warning);
+  });
+
   const viewport: FramingViewport = {
     mode,
     requestedMode: options.fitMode,
@@ -816,7 +894,7 @@ export const resolveViewport = (
     padding: options.padding,
     stage: safeStage,
     rect,
-    labelRect: labelRectFor(safeStage),
+    labelRect: safeLabelRect,
     center,
     zoom: scaleToZoom(projection.scale()),
     scale: projection.scale(),
@@ -830,6 +908,12 @@ export const resolveViewport = (
     warnings,
     diagnostics,
     referenceZoom: scaleToZoom(referenceScale),
+    ...(safe
+      ? {
+          keepOutRect: safe.keepOutRect ?? null,
+          mapRect: authoredRect,
+        }
+      : {}),
   };
 
   const nextBucket = bucket ?? new Map<string, FramingViewport>();

@@ -1,0 +1,39 @@
+{
+  "version": "2026-10-17.1",
+  "provenance": "initial-estimate",
+  "note": [
+    "以上/以下所有像素值都是【工程初始估值】，不是 TikTok 或抖音的官方统一像素规范。",
+    "TikTok 的广告规范不能等同于普通自然流视频的规范；TikTok 的参数也不能当作抖音的规范。",
+    "换机型、换客户端版本、换系统（含底部手势条）后，这些值都要按真实手机截图重新校准。",
+    "校准完成后把对应平台的 verified 改成 true，日志里就会去掉“尚未用真机截图校准”提示。",
+    "坐标系：以 1080x1920 设计画布为基准，原点在左上角，单位像素。",
+    "画布尺寸可改，但正式输出仍是 1080x1920（见 src/Root.tsx）。",
+    "mapBleed 只影响【地图底图】能吃进上/下预留带多少像素（把整幅地图撑大、收窄两侧留白）；标题、排名标签仍然只看核心安全区，不受它影响。设为 0 即回到底图完全不进预留带的保守布局。"
+  ],
+  "canvas": { "width": 1080, "height": 1920 },
+  "defaultPlatform": "tiktok",
+  "contentGapPx": 24,
+  "descriptionTiers": [
+    { "tier": "short", "maxChars": 80, "bottomPx": 480 },
+    { "tier": "medium", "maxChars": 200, "bottomPx": 540 },
+    { "tier": "long", "maxChars": null, "bottomPx": 600 }
+  ],
+  "platforms": {
+    "tiktok": {
+      "label": "TikTok",
+      "verified": false,
+      "margins": { "top": 240, "bottom": 480, "left": 72, "right": 180 },
+      "bottomByTier": { "short": 480, "medium": 540, "long": 600 },
+      "interactiveKeepOut": { "x": 900, "y": 650, "width": 180, "height": 930 },
+      "mapBleed": { "top": 72, "bottom": 288 }
+    },
+    "douyin": {
+      "label": "抖音",
+      "verified": false,
+      "margins": { "top": 240, "bottom": 480, "left": 72, "right": 180 },
+      "bottomByTier": { "short": 480, "medium": 540, "long": 600 },
+      "interactiveKeepOut": { "x": 900, "y": 650, "width": 180, "height": 930 },
+      "mapBleed": { "top": 144, "bottom": 288 }
+    }
+  }
+}

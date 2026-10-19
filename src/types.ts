@@ -1,5 +1,6 @@
 ﻿import type {FeatureCollection, Geometry} from 'geojson';
 import type {FramingOptions} from './framing/resolveViewport';
+import type {SafeAreaResolution, SafePlatform} from './safearea/safeArea';
 
 export type RankingDatum = {
   rank: number;
@@ -49,6 +50,29 @@ export type ProjectData = {
    * then held for every frame (see `src/framing/resolveViewport.ts`).
    */
   framing?: FramingOptions;
+  /** Publishing platform; TikTok and 抖音 carry their own safe-area numbers. */
+  platform?: SafePlatform;
+  /**
+   * The **publish description** (captions + hashtags), not the on-video
+   * narration. Only its length matters here: it selects the short / medium /
+   * long safe-area tier.
+   */
+  publishDescription?: string;
+  /**
+   * Safe area, already resolved from the platform config + description tier.
+   *
+   * The server resolves it once per job and writes it into the render props, so
+   * the MP4, the browser preview and the generation log all use the very same
+   * rectangles. When it is missing the render falls back to the built-in
+   * defaults (short / default platform) — never to "no safe area at all".
+   */
+  safeArea?: SafeAreaResolution;
+  /**
+   * Development-only switch for the safe-area overlay. It is **never** written
+   * into the production render props, so an exported MP4 can never contain the
+   * debug mask, borders or coordinate labels.
+   */
+  debugSafeArea?: boolean;
 };
 
 export type ProvinceProperties = {

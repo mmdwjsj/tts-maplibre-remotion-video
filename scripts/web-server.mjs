@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createTtsRegistry } from "./tts/engine-registry.mjs";
 import { loadTtsConfig } from "./tts/log-config.mjs";
+import { loadSafeAreaConfig } from "./safearea/load-safe-area-config.mjs";
 import {
   normalizeTtsRequest,
   normalizeUnifiedTtsRequest,
@@ -148,6 +149,42 @@ try {
 }
 
 /**
+ * TikTok / 抖音 UI 安全区。配置来自 `src/config/safe-area.config.json`（可用
+ * `SAFE_AREA_CONFIG_PATH` 或 `config/safe-area.config.json` 覆盖），计算逻辑
+ * 来自 `src/safearea/safeArea.ts` —— 与渲染端**同一份**实现，所以预览、日志
+ * 和成片不会算出三套不同的边距。模块加载失败时退回内置默认值并告警。
+ */
+let safeAreaModule = null;
+try {
+  safeAreaModule = await import("../src/safearea/safeArea.ts");
+} catch (error) {
+  console.warn(
+    `[safe-area] 无法加载安全区模块，将退回内置默认值：${error.message}`,
+  );
+}
+
+/** 标签落位算法（与 `ThailandMap` 用的是同一个模块，不是复制品）。 */
+let labelPlacementModule = null;
+try {
+  labelPlacementModule = await import("../src/video/layout/labelPlacement.ts");
+} catch (error) {
+  console.warn(
+    `[safe-area] 无法加载标签落位模块，标签安全区审计不可用：${error.message}`,
+  );
+}
+
+const {
+  config: safeAreaConfig,
+  configPath: safeAreaConfigPath,
+  warning: safeAreaConfigWarning,
+} = loadSafeAreaConfig(root);
+if (safeAreaConfigWarning) {
+  console.warn(`[safe-area] ${safeAreaConfigWarning}`);
+} else {
+  console.log(`[safe-area] 配置 ${safeAreaConfigPath}`);
+}
+
+/**
  * The narration module turns the ranking table into the lines the engine speaks
  * and locates the rank/name boundary inside each of them. The timeline is split
  * on exactly those boundaries, so the map lights a province the moment the voice
@@ -181,13 +218,22 @@ try {
  * framing mode, centre, zoom, coverage and — explicitly — every ranking region
  * that ended up outside the frame.
  */
-const resolveFraming = (rankings, framing) => {
+const resolveFraming = (rankings, framing, safeArea) => {
   if (!framingModule || !provinceGeoJson) return null;
   const viewport = framingModule.resolveViewport(
     provinceGeoJson,
     (Array.isArray(rankings) ? rankings : []).map((row) => row?.provinceId),
     framing,
     framingModule.MAP_STAGE,
+    // The platform safe area is resolved by `src/safearea/safeArea.ts`; it only
+    // supplies the fit/label rectangles, it never adds per-frame motion.
+    safeArea
+      ? {
+          mapRect: safeArea.mapRect,
+          labelRect: safeArea.labelRect,
+          keepOutRect: safeArea.interactiveGapRect,
+        }
+      : undefined,
   );
   framingModule
     .describeViewport(viewport)
@@ -218,6 +264,156 @@ const auditProvinces = (rankings) => {
   }
   return audit;
 };
+
+/**
+ * Resolves the platform UI safe area for one job and writes the log.
+ *
+ * The platform and the **publish description** come straight from the request;
+ * the description only ever picks a tier (short / medium / long) — it is not the
+ * on-video narration, and the video never re-flows its own text because the
+ * caption got longer.
+ */
+const resolveSafeAreaFor = (body, { silent = false } = {}) => {
+  if (!safeAreaModule) return null;
+  const resolution = safeAreaModule.resolveSafeArea(safeAreaConfig, {
+    platform: body?.platform,
+    description: body?.publishDescription,
+  });
+  // The preview endpoint re-resolves while the user types; only the generation
+  // path writes the log, so nothing is spammed and nothing is swallowed either.
+  if (silent) return resolution;
+  safeAreaModule
+    .describeSafeArea(resolution)
+    .forEach((line) =>
+      line.startsWith("警告：")
+        ? console.warn(`[safe-area] ${line}`)
+        : console.log(`[safe-area] ${line}`),
+    );
+  return resolution;
+};
+
+/**
+ * Audits where every floating rank label would land, plus the fixed headline
+ * blocks, against the resolved safe area.
+ *
+ * Label positions are derived from `viewport.diagnostics` (the real projected
+ * centre of every ranked province in the final viewport) and from the very same
+ * `placeLabel` the map component calls — so this is a check of the *actual*
+ * layout, not of a second guess. Nothing is silently hidden: every conflict is
+ * reported with the element id, its component, the direction and the pixels.
+ */
+const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
+  if (!safeAreaModule || !viewport || !resolution) return null;
+  const elements = [];
+
+  if (labelPlacementModule) {
+    for (const diagnostic of viewport.diagnostics ?? []) {
+      const placement = labelPlacementModule.placeLabel({
+        cx: diagnostic.center[0],
+        cy: diagnostic.center[1],
+        rect: viewport.mapRect ?? viewport.rect,
+        panelBounds: viewport.labelRect,
+        keepOut: viewport.keepOutRect ?? null,
+      });
+      elements.push({
+        id: `label:${diagnostic.provinceId}`,
+        component: "ThailandMap/placeLabel",
+        rect: placement.panelRect,
+        kind: "panel",
+        conflict: placement.conflict,
+      });
+    }
+  }
+
+  // The fixed headline blocks: their rects mirror the styles the render applies
+  // (header pinned to the top of the core rect, footer just inside its bottom).
+  elements.push(
+    {
+      id: "header:title",
+      component: "ThailandRankingVideo/header",
+      kind: "text",
+      rect: {
+        x0: resolution.coreRect.x0,
+        y0: resolution.coreRect.y0 + 24,
+        x1: resolution.coreRect.x1,
+        y1: resolution.coreRect.y0 + 24 + 110,
+      },
+    },
+    {
+      id: "footer:meta",
+      component: "ThailandRankingVideo/footer",
+      kind: "text",
+      rect: {
+        x0: resolution.coreRect.x0,
+        y0: resolution.coreRect.y1 - 48,
+        x1: resolution.coreRect.x1,
+        y1: resolution.coreRect.y1 - 24,
+      },
+    },
+  );
+
+  const audit = safeAreaModule.auditSafeAreaLayout({
+    resolution,
+    elements,
+    labelGapPx: resolution.contentGapPx,
+  });
+
+  const labelConflicts = elements.filter((element) => element.conflict);
+  // Only real violations (outside the safe area, or inside the action rail)
+  // fail the check. Two labels overlapping is reported separately: the video
+  // shows one label at a time, so a potential overlap between neighbouring
+  // provinces is a hint, not a defect.
+  const ok = audit.issues.length === 0;
+
+  if (!silent) {
+    labelConflicts.forEach((element) =>
+      console.warn(`[safe-area] ${element.conflict.detail}`),
+    );
+    audit.lines.forEach((line) => console.warn(`[safe-area] ${line}`));
+    if (ok) {
+      console.log(
+        `[safe-area] 布局检查通过：${elements.length} 个元素均在安全区内（右 ${resolution.margins.right}px / 下 ${resolution.margins.bottom}px 已避开）` +
+          (audit.overlaps.length
+            ? `；另有 ${audit.overlaps.length} 处潜在标签重叠（成片同一时刻只显示一个标签，属提示）`
+            : ""),
+      );
+    }
+  }
+
+  return {
+    ok,
+    platform: audit.platform,
+    descriptionTier: audit.descriptionTier,
+    issues: audit.issues,
+    overlaps: audit.overlaps,
+    violatingIds: audit.violatingIds,
+    labelConflicts: labelConflicts.map((element) => element.conflict),
+    checkedElements: elements.length,
+  };
+};
+
+/** Compact safe-area summary for the timeline file and the HTTP response. */
+const safeAreaSummary = (resolution) =>
+  resolution
+    ? {
+        version: resolution.version,
+        provenance: resolution.provenance,
+        verified: resolution.verified,
+        platform: resolution.platform,
+        platformLabel: resolution.platformLabel,
+        descriptionTier: resolution.descriptionTier,
+        descriptionChars: resolution.descriptionChars,
+        margins: resolution.margins,
+        bottomSource: resolution.bottomSource,
+        contentGapPx: resolution.contentGapPx,
+        coreRect: resolution.coreRect,
+        labelRect: resolution.labelRect,
+        interactiveRect: resolution.interactiveRect,
+        interactiveGapRect: resolution.interactiveGapRect,
+        mapRect: resolution.mapRect,
+        warnings: resolution.warnings,
+      }
+    : null;
 
 const framingSummary = (viewport) =>
   viewport
@@ -492,6 +688,7 @@ const server = http.createServer(async (req, res) => {
       }
       const body = await readBody(req);
       const { options } = framingModule.normalizeFramingOptions(body.framing);
+      const safeArea = resolveSafeAreaFor(body, { silent: true });
       const viewport = framingModule.resolveViewport(
         provinceGeoJson,
         (Array.isArray(body.rankings) ? body.rankings : []).map(
@@ -501,13 +698,23 @@ const server = http.createServer(async (req, res) => {
         // validation warnings into `viewport.warnings`, so nothing is swallowed.
         body.framing,
         framingModule.MAP_STAGE,
+        safeArea
+          ? {
+              mapRect: safeArea.mapRect,
+              labelRect: safeArea.labelRect,
+              keepOutRect: safeArea.interactiveGapRect,
+            }
+          : undefined,
       );
+      const labelAudit = auditSafeArea(safeArea, viewport, { silent: true });
       // Path data is produced by the same projection the render uses, so what
       // the browser draws is pixel-for-pixel what Remotion will draw.
       json(res, 200, {
         options,
         viewport,
         paths: framingModule.projectFeatures(viewport, provinceGeoJson),
+        safeArea,
+        labelAudit,
         // The full province list (id + 英文名 + 泰文名) feeds the 府 ID picker and
         // the name columns in the UI, so none of the three is ever typed from
         // memory, and choosing any one of them fills the other two.
@@ -562,11 +769,17 @@ const server = http.createServer(async (req, res) => {
         );
       }
 
+      // The platform safe area is resolved first: it depends on the publish
+      // description (a request field), not on anything the render computes, and
+      // it feeds the static viewport below.
+      const safeArea = resolveSafeAreaFor(body);
+
       // The static viewport is resolved once, from the complete ranking set and
       // before any render work starts, then held for the whole video. Resolving
       // it here also writes the framing log (including every region that ends up
       // outside the frame).
-      const viewport = resolveFraming(body.rankings, body.framing);
+      const viewport = resolveFraming(body.rankings, body.framing, safeArea);
+      const safeAreaAudit = auditSafeArea(safeArea, viewport);
 
       const outputName = safeName(body.outputName);
       const wavPath = path.join(generatedDir, `${outputName}.wav`);
@@ -756,6 +969,11 @@ const server = http.createServer(async (req, res) => {
             }
           : undefined,
         provinceAudit: provinceAudit ?? undefined,
+        // Platform UI safe area used for this render: margins, tiers, the four
+        // rectangles and every compatibility warning, so a timeline file alone is
+        // enough to reproduce (and audit) the layout.
+        safeArea: safeAreaSummary(safeArea) ?? undefined,
+        safeAreaAudit: safeAreaAudit ?? undefined,
         segments,
       };
       fs.writeFileSync(timelinePath, JSON.stringify(timeline, null, 2), "utf8");
@@ -808,6 +1026,14 @@ const server = http.createServer(async (req, res) => {
           // bundle validates them exactly like the server just did, so preview
           // and MP4 resolve to the identical viewport.
           framing: body.framing ?? {},
+          // The resolved safe area travels with the props: the render consumes
+          // these exact rectangles instead of re-deriving them, so the MP4 can
+          // never disagree with the preview.
+          platform: safeArea?.platform ?? undefined,
+          safeArea: safeArea ?? undefined,
+          // NOTE: `debugSafeArea` is deliberately **not** set here. The
+          // development overlay only draws when the props explicitly ask for it,
+          // so an exported MP4 can never contain the safe-area mask or labels.
         },
       };
 
@@ -849,6 +1075,8 @@ const server = http.createServer(async (req, res) => {
         resolution: `${width}x${height}`,
         fps,
         framing: framingSummary(viewport),
+        safeArea: safeAreaSummary(safeArea),
+        safeAreaAudit: safeAreaAudit,
         // `mismatched` is the actionable part; the UI turns it into a per-row
         // hint plus a one-click fix.
         provinceAudit: provinceAudit
