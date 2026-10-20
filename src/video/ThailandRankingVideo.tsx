@@ -10,7 +10,10 @@ import {
 } from "remotion";
 import geoData from "../data/thailand-provinces.geo.json";
 import type { ProjectData, ThailandGeoJson } from "../types";
-import { buildTimeline, findRevealedSegmentIndex } from "../timeline/buildTimeline";
+import {
+  buildTimeline,
+  findRevealedSegmentIndex,
+} from "../timeline/buildTimeline";
 import { theme } from "../config/theme";
 import { ThailandMap } from "./components/ThailandMap";
 import { SafeAreaOverlay } from "./components/SafeAreaOverlay";
@@ -31,13 +34,14 @@ const DESIGN_HEIGHT = 1920;
 // The map is the bottom layer and fills the entire canvas — `MAP_STAGE` is the
 // container size in SVG user units, so the resolved viewport is always computed
 // against the real container. Header and footer float above it; these gradient
-// scrims keep their text readable. The header scrim stops short of the map
-// (`MAP_SAFE_INSET.top` keeps the map below the title anyway), so it never
-// darkens ranked provinces.
+// scrims keep their text readable. The scrims are painted in the *sea* colour
+// (not black): the palette is a light one — bright blue water, near-white land —
+// so the header band reads as more water rather than as a dark bar, and the
+// dark ink title keeps its contrast either way.
 const HEADER_SCRIM =
-  "linear-gradient(180deg, rgba(8,16,22,0.97) 0%, rgba(8,16,22,0.92) 30%, rgba(8,16,22,0.62) 62%, rgba(8,16,22,0) 100%)";
+  "linear-gradient(180deg, rgba(47,169,225,0.96) 0%, rgba(47,169,225,0.9) 30%, rgba(47,169,225,0.5) 62%, rgba(47,169,225,0) 100%)";
 const FOOTER_SCRIM =
-  "linear-gradient(0deg, rgba(8,16,22,0.95) 0%, rgba(8,16,22,0.7) 45%, rgba(8,16,22,0) 100%)";
+  "linear-gradient(0deg, rgba(47,169,225,0.94) 0%, rgba(47,169,225,0.62) 45%, rgba(47,169,225,0) 100%)";
 
 /** Frames the title takes to fade away once the opening line has been spoken. */
 const TITLE_FADE_FRAMES = 9;
@@ -152,6 +156,20 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
       : 1;
   const scale = Math.min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT);
 
+  // 标题字体自适应变小
+  const getTitleFontSize = (title: string) => {
+    const visualLength = Array.from(title.trim()).reduce((length, char) => {
+      return length + (/[\u0000-\u00ff]/.test(char) ? 0.55 : 1);
+    }, 0);
+
+    if (visualLength <= 20) return 46;
+    if (visualLength <= 30) return 42;
+    if (visualLength <= 42) return 38;
+    return 34;
+  };
+
+  const titleFontSize = getTitleFontSize(project.title);
+
   return (
     <AbsoluteFill
       style={{
@@ -222,8 +240,9 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           style={{
             position: "absolute",
             bottom: 0,
-            left: 0,
-            right: 0,
+            left: 48,
+            right: 48,
+            textAlign: "center",
             height: Math.max(260, design.bottomMargin + 120),
             background: FOOTER_SCRIM,
             pointerEvents: "none",
@@ -237,7 +256,7 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             top: Math.max(8, design.core.y0 - 18),
             height: 1,
             background:
-              "linear-gradient(90deg, transparent, rgba(41,229,210,.55), transparent)",
+              "linear-gradient(90deg, transparent, rgba(224,102,26,.6), transparent)",
             opacity: titleOpacity,
           }}
         />
@@ -247,8 +266,9 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           style={{
             position: "absolute",
             top: design.core.y0 + 24,
-            left: design.core.x0,
-            right: design.rightMargin,
+            left: 48,
+            right: 48,
+            textAlign: "center",
             opacity: intro * titleOpacity,
             transform: `translateY(${(1 - intro) * 18 - (1 - titleOpacity) * 16}px)`,
           }}
@@ -258,10 +278,18 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           </div> */}
           <h1
             style={{
-              fontSize: 54,
-              lineHeight: 1.08,
+              fontSize: titleFontSize,
+              lineHeight: 1.15,
               margin: "18px 0 8px",
               letterSpacing: 1,
+              overflowWrap: "anywhere",
+              textAlign: "center",
+
+              // 最多显示两行
+              display: "-webkit-box",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: 2,
+              overflow: "hidden",
             }}
           >
             {project.title}
@@ -284,9 +312,9 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           }}
         >
           {/* <span>PROVINCE DATA VISUALIZATION</span> */}
-          <span>
+          {/* <span>
             {String(project.rankings.length).padStart(2, "0")} PROVINCES
-          </span>
+          </span> */}
         </footer>
         {/* Development-only overlay: rendered only when the props explicitly ask
             for it, and the production render props never do. */}

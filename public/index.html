@@ -83,7 +83,7 @@
     }
 
     header span {
-      color: #6ee7d8;
+      color: #ffb067;
       font-size: 11px;
     }
 
@@ -139,7 +139,7 @@
     .card h2 {
       flex: 0 0 auto;
       margin: 0 0 8px;
-      color: #8eece0;
+      color: #ffc58a;
       font-size: 12px;
       letter-spacing: 0.4px;
     }
@@ -170,23 +170,23 @@
     .file-label,
     .download {
       padding: 5px 9px;
-      color: #dffefa;
+      color: #ffe6cc;
       font-size: 12px;
       font-weight: 600;
       text-decoration: none;
       cursor: pointer;
-      background: #12383d;
-      border: 1px solid #34716e;
+      background: #3a2413;
+      border: 1px solid #8a5622;
       border-radius: 6px;
     }
 
     button.primary {
       width: auto;
       padding: 8px 14px;
-      color: #041311;
+      color: #20120a;
       font-size: 14px;
       font-weight: 700;
-      background: #2bc7b1;
+      background: #f28c28;
       border: 0;
     }
 
@@ -457,6 +457,9 @@
        letterboxes itself (`preserveAspectRatio`), so it always fits the room the
        one-screen layout gives it — no fixed pixel height. 首屏时图占满整列高度，
        说明文字被推到滚动区外，滚动才能看到。 */
+    /* 预览舞台 = 成片的「海」。视频里地图是整幅铺满的，海水颜色来自
+       theme.background/backgroundGlow，所以这里也必须用同一组海蓝，
+       否则预览图看起来还是旧版深色。 */
     .preview {
       position: relative;
       display: flex;
@@ -466,8 +469,8 @@
       width: 100%;
       height: 100%;
       min-height: 400px;
-      background: radial-gradient(circle, #123a3b, #09191f 65%);
-      border: 1px dashed #2a5b60;
+      background: radial-gradient(circle at 50% 36%, #43b4e8, #2fa9e1 68%);
+      border: 1px dashed #1f6e96;
       border-radius: 8px;
     }
 
@@ -479,51 +482,57 @@
       height: 100%;
     }
 
+    /* 陆地配色对齐 src/config/theme.ts（B8）：
+       未上榜府 = 纯白陆地 + 灰色细界，上榜府按名次取色（前 3 橙、4-5 绿），
+       填充色由脚本内联写入 —— 与 theme.rankFill 是同一套色值。 */
     .map path {
-      fill: #16333a;
-      stroke: #2f5a60;
-      stroke-width: 1.2;
+      fill: #ffffff;
+      stroke: #8c9ba5;
+      stroke-width: 1.1;
     }
 
-    /* A ranking province that made it into the frame. */
+    /* A ranking province that made it into the frame. `fill` 是兜底，
+       实际颜色由脚本按名次内联覆盖；白色描边把相邻橙/绿府分开。 */
     .map path.lit {
-      fill: #2bc7b1;
-      stroke: #a2fff0;
+      fill: #e0661a;
+      stroke: #ffffff;
       stroke-width: 1.5;
     }
 
-    /* A ranking province framed out on purpose: still drawn, never dropped. */
+    /* A ranking province framed out on purpose: still drawn, never dropped.
+       白色陆地 + 橙色虚线，一眼看出「在画面外但没丢」。 */
     .map path.off {
-      fill: #1d4a4c;
-      stroke: #6ee7d8;
-      stroke-dasharray: 6 5;
-      stroke-opacity: 0.75;
+      fill: #ffffff;
+      stroke: #e0661a;
+      stroke-width: 1.4;
+      stroke-dasharray: 7 6;
+      stroke-opacity: 0.9;
     }
 
     /* The framing window (safe area) the auto-framing fits the data into. */
     .map rect.frame {
       fill: none;
-      stroke: #6ee7d8;
+      stroke: #1f6e96;
       stroke-width: 2;
       stroke-dasharray: 12 9;
-      opacity: 0.5;
+      opacity: 0.62;
     }
 
-    /* Title / footer bands, darkened exactly like the render scrims: the map
-       runs behind them, the floating label does not. */
+    /* Title / footer bands, tinted like the render scrims (sea-blue gradient):
+       the map runs behind them, the floating label does not. */
     .map rect.band {
-      fill: rgba(8, 16, 22, 0.72);
+      fill: rgba(47, 169, 225, 0.82);
     }
 
     .map rect.label-band {
       fill: none;
-      stroke: rgba(110, 231, 216, 0.32);
+      stroke: rgba(16, 42, 56, 0.42);
       stroke-width: 2;
       stroke-dasharray: 4 10;
     }
 
     .map text.band-label {
-      fill: #7ca5a4;
+      fill: rgba(16, 42, 56, 0.82);
       font-size: 26px;
       letter-spacing: 2px;
     }
@@ -532,25 +541,25 @@
        src/video/components/SafeAreaOverlay.tsx 的开关）。外部半透明压暗，
        核心安全区实线，标签安全区点线，右侧互动栏禁入区用橙红区分。 */
     .map rect.safe-mask {
-      fill: rgba(4, 10, 14, 0.58);
+      fill: rgba(6, 32, 48, 0.42);
     }
 
     .map rect.safe-map-area {
       fill: none;
-      stroke: rgba(41, 229, 210, 0.28);
+      stroke: rgba(224, 102, 26, 0.45);
       stroke-width: 2;
       stroke-dasharray: 10 8;
     }
 
     .map rect.safe-core {
       fill: none;
-      stroke: #29e5d2;
+      stroke: #e0661a;
       stroke-width: 3;
     }
 
     .map rect.safe-label {
       fill: none;
-      stroke: rgba(41, 229, 210, 0.75);
+      stroke: rgba(224, 102, 26, 0.85);
       stroke-width: 2;
       stroke-dasharray: 6 6;
     }
@@ -570,7 +579,7 @@
     }
 
     .map text.safe-caption {
-      fill: #d8f7f2;
+      fill: #12303f;
       font-size: 24px;
       letter-spacing: 1px;
     }
@@ -682,6 +691,8 @@
       top: 10px;
       right: 8px;
       left: 8px;
+      /* 浅色主题：标题是深墨绿压在蓝海/白陆地上（与 theme.text 一致）。 */
+      color: #203027;
       font-size: 13px;
       font-weight: 700;
       line-height: 1.25;
@@ -848,7 +859,7 @@
       display: block;
       width: 0;
       height: 100%;
-      background: #2bc7b1;
+      background: #f28c28;
       transition: width 0.35s;
     }
 
@@ -1026,7 +1037,7 @@
 
         <div class="field">
           <label for="outputName">输出文件名</label>
-          <input id="outputName" value="thailand-province-ranking" />
+          <input id="outputName" value="thai-rank" />
         </div>
 
         <div class="field">
@@ -1316,6 +1327,16 @@
     let previewVersion = 0;
     let previewTimer = null;
     let provinceNames = {};
+    /**
+     * 名次色阶 —— 与 `src/config/theme.ts` 的 `rankFill` 逐项对应（前 3 名橙、
+     * 第 4-5 名绿）。改配色时两边必须一起改，否则预览图与成片会不一致。
+     */
+    const RANK_FILL = ["#E0661A", "#F28C28", "#F7AE6A", "#3F7A4E", "#6FA377"];
+    const rankFill = (rank) => {
+      // 名次缺失或超出色阶长度时退回末位色，绝不返回 undefined（会变成黑块）。
+      if (!Number.isFinite(rank)) return "#6FA377";
+      return RANK_FILL[Math.min(Math.max(rank, 1), RANK_FILL.length) - 1];
+    };
     /**
      * The 77-province roster (`{id, en, th, enKey, thKey}`) that arrives with the
      * framing preview. It is the only source for the 府 ID picker and for the
@@ -1644,13 +1665,23 @@
 
       const kept = new Set(viewport.keptIds);
       const dropped = new Set(viewport.droppedIds);
+      // 名次 → 填充色：预览图必须画出和成片一样的橙/绿分布，否则「取景预览」
+      // 只能看形状，看不出配色。id 统一大写再匹配（GeoJSON 与数据表都是 TH-xx）。
+      const rankById = new Map(
+        data.map((row) => [
+          String(row.provinceId ?? "").trim().toUpperCase(),
+          Number(row.rank),
+        ]),
+      );
       const shapes = paths
         .map(({ id, d }) => {
-          const className = kept.has(id)
-            ? "province lit"
-            : dropped.has(id)
-              ? "province off"
-              : "province";
+          if (kept.has(id)) {
+            const fill = rankFill(rankById.get(String(id).trim().toUpperCase()));
+            return `<path class="province lit" d="${d}" style="fill:${fill}"></path>`;
+          }
+          const className = dropped.has(id)
+            ? "province off"
+            : "province";
           return `<path class="${className}" d="${d}"></path>`;
         })
         .join("");
@@ -1694,7 +1725,7 @@
         `固定镜头 · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
         `${viewport.zoom.toFixed(2)}；地图横向铺满，上下避开标题区与页脚区（` +
         `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
-        `暗色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区` +
+        `海蓝色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区` +
         platformNote;
       $("#framingInfo").innerHTML = renderFramingInfo(viewport);
       renderSafeAreaInfo(safeArea, labelAudit);

@@ -8,32 +8,32 @@
 
 共 77 个行政区域。表格由 `node scripts/data/fill-thai-names.mjs` 写入边界数据后生成，改动边界数据请同步本表。
 
-| id | 英文名 | 泰文名 |
+| id | 英文名 | 泰文名 | 中文名 |
 | --- | --- | --- |
-| TH-10 | Bangkok | กรุงเทพมหานคร |
-| TH-11 | Samut Prakan | สมุทรปราการ |
-| TH-12 | Nonthaburi | นนทบุรี |
-| TH-13 | Pathum Thani | ปทุมธานี |
-| TH-14 | Phra Nakhon Si Ayutthaya | พระนครศรีอยุธยา |
-| TH-15 | Ang Thong | อ่างทอง |
-| TH-16 | Lop Buri | ลพบุรี |
-| TH-17 | Sing Buri | สิงห์บุรี |
-| TH-18 | Chai Nat | ชัยนาท |
-| TH-19 | Saraburi | สระบุรี |
-| TH-20 | Chon Buri | ชลบุรี |
-| TH-21 | Rayong | ระยอง |
-| TH-22 | Chanthaburi | จันทบุรี |
+| TH-10 | Bangkok | กรุงเทพมหานคร | 曼谷 |
+| TH-11 | Samut Prakan | สมุทรปราการ | 北榄府 |
+| TH-12 | Nonthaburi | นนทบุรี | 暖武里府 |
+| TH-13 | Pathum Thani | ปทุมธานี | 巴吞他尼府 |
+| TH-14 | Phra Nakhon Si Ayutthaya | พระนครศรีอยุธยา | 巴吞他尼府 |
+| TH-15 | Ang Thong | อ่างทอง | 巴吞他尼府 |
+| TH-16 | Lop Buri | ลพบุรี | 巴吞他尼府 |
+| TH-17 | Sing Buri | สิงห์บุรี | 巴吞他尼府 |
+| TH-18 | Chai Nat | ชัยนาท | 巴吞他尼府 |
+| TH-19 | Saraburi | สระบุรี | 巴吞他尼府 |
+| TH-20 | Chon Buri | ชลบุรี | 巴吞他尼府 |
+| TH-21 | Rayong | ระยอง | 巴吞他尼府 |
+| TH-22 | Chanthaburi | จันทบุรี | 巴吞他尼府 |
 | TH-23 | Trat | ตราด |
-| TH-24 | Chachoengsao | ฉะเชิงเทรา |
-| TH-25 | Prachin Buri | ปราจีนบุรี |
-| TH-26 | Nakhon Nayok | นครนายก |
-| TH-27 | Sa Kaeo | สระแก้ว |
-| TH-30 | Nakhon Ratchasima | นครราชสีมา |
-| TH-31 | Buri Ram | บุรีรัมย์ |
-| TH-32 | Surin | สุรินทร์ |
-| TH-33 | Si Sa Ket | ศรีสะเกษ |
-| TH-34 | Ubon Ratchathani | อุบลราชธานี |
-| TH-35 | Yasothon | ยโสธร |
+| TH-24 | Chachoengsao | ฉะเชิงเทรา | 巴吞他尼府 |
+| TH-25 | Prachin Buri | ปราจีนบุรี | 巴吞他尼府 |
+| TH-26 | Nakhon Nayok | นครนายก | 巴吞他尼府 |
+| TH-27 | Sa Kaeo | สระแก้ว | 巴吞他尼府 |
+| TH-30 | Nakhon Ratchasima | นครราชสีมา | 巴吞他尼府 |
+| TH-31 | Buri Ram | บุรีรัมย์ | 巴吞他尼府 |
+| TH-32 | Surin | สุรินทร์ | 巴吞他尼府 |
+| TH-33 | Si Sa Ket | ศรีสะเกษ | 巴吞他尼府 |
+| TH-34 | Ubon Ratchathani | อุบลราชธานี | 巴吞他尼府 |
+| TH-35 | Yasothon | ยโสธร | 巴吞他尼府 |
 | TH-36 | Chaiyaphum | ชัยภูมิ |
 | TH-37 | Amnat Charoen | อำนาจเจริญ |
 | TH-38 | Bueng Kan | บึงกาฬ |
