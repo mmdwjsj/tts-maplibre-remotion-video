@@ -422,12 +422,18 @@ const framingSummary = (viewport) =>
         requestedMode: viewport.requestedMode,
         preset: viewport.preset,
         coverageThreshold: viewport.coverageThreshold,
+        allowOutlierDrop: viewport.allowOutlierDrop,
         coverage: viewport.coverage,
         coveredCount: viewport.coveredCount,
         totalCount: viewport.totalCount,
         center: viewport.center,
         zoom: viewport.zoom,
         referenceZoom: viewport.referenceZoom,
+        cameraMove: viewport.cameraMove,
+        contextFloor: viewport.contextFloor,
+        contextFloorApplied: viewport.contextFloorApplied,
+        countryLonSpan: viewport.countryLonSpan,
+        visibleLonSpan: viewport.visibleLonSpan,
         keptIds: viewport.keptIds,
         droppedIds: viewport.droppedIds,
         missingIds: viewport.missingIds,
@@ -707,11 +713,30 @@ const server = http.createServer(async (req, res) => {
           : undefined,
       );
       const labelAudit = auditSafeArea(safeArea, viewport, { silent: true });
+      // Opening position of the intro camera move: the whole country, resolved
+      // with the same options the render uses (only `fitMode` is overridden), so
+      // the preview can show both ends of the move instead of guessing.
+      const introViewport = framingModule.resolveViewport(
+        provinceGeoJson,
+        (Array.isArray(body.rankings) ? body.rankings : []).map(
+          (row) => row?.provinceId,
+        ),
+        { ...(body.framing ?? {}), fitMode: "full-country" },
+        framingModule.MAP_STAGE,
+        safeArea
+          ? {
+              mapRect: safeArea.mapRect,
+              labelRect: safeArea.labelRect,
+              keepOutRect: safeArea.interactiveGapRect,
+            }
+          : undefined,
+      );
       // Path data is produced by the same projection the render uses, so what
       // the browser draws is pixel-for-pixel what Remotion will draw.
       json(res, 200, {
         options,
         viewport,
+        introViewport: framingSummary(introViewport),
         paths: framingModule.projectFeatures(viewport, provinceGeoJson),
         safeArea,
         labelAudit,
@@ -939,6 +964,18 @@ const server = http.createServer(async (req, res) => {
           ? +(segments[0].start + segments[0].duration).toFixed(3)
           : 0;
 
+      // The intro camera move rides on the opening line: it starts the instant
+      // the welcome line starts and lands the instant it ends. Recorded in the
+      // timeline so a rendered MP4 can be traced back to its camera path.
+      const cameraMove =
+        segments[0]?.type === "opening" && viewport?.cameraMove !== false
+          ? {
+              enabled: true,
+              start: +segments[0].start.toFixed(3),
+              end: +(segments[0].start + segments[0].duration).toFixed(3),
+            }
+          : { enabled: false, start: 0, end: 0 };
+
       const timeline = {
         title: body.title,
         outputName,
@@ -962,9 +999,17 @@ const server = http.createServer(async (req, res) => {
         totalDuration: videoDuration,
         totalFrames,
         titleEnd,
+        cameraMove,
         framing: viewport
           ? {
-              options: body.framing ?? {},
+              // Raw options plus the values that actually took effect: without
+              // `allowOutlierDrop`, a stale `coverageThreshold: 0.9` is clamped
+              // to 1, and the audit file must not suggest otherwise.
+              options: {
+                ...(body.framing ?? {}),
+                coverageThreshold: viewport.coverageThreshold,
+                allowOutlierDrop: viewport.allowOutlierDrop,
+              },
               viewport: framingSummary(viewport),
             }
           : undefined,

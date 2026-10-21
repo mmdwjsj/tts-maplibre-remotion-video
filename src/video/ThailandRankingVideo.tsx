@@ -17,7 +17,7 @@ import {
 import { theme } from "../config/theme";
 import { ThailandMap } from "./components/ThailandMap";
 import { SafeAreaOverlay } from "./components/SafeAreaOverlay";
-import { MAP_STAGE, resolveViewport } from "../framing/resolveViewport";
+import { MAP_STAGE, blendViewport, resolveViewport } from "../framing/resolveViewport";
 import {
   DEFAULT_SAFE_AREA_CONFIG,
   isDebugOverlayEnabled,
@@ -33,15 +33,15 @@ const DESIGN_HEIGHT = 1920;
 
 // The map is the bottom layer and fills the entire canvas — `MAP_STAGE` is the
 // container size in SVG user units, so the resolved viewport is always computed
-// against the real container. Header and footer float above it; these gradient
-// scrims keep their text readable. The scrims are painted in the *sea* colour
-// (not black): the palette is a light one — bright blue water, near-white land —
-// so the header band reads as more water rather than as a dark bar, and the
-// dark ink title keeps its contrast either way.
+// against the real container. Header and footer float above it; the header scrim
+// keeps the title readable where a province or a leader line runs underneath.
+// It is painted in the *sea* colour (not black): the palette is a light one —
+// bright blue water, near-white land — so the header band reads as more water
+// rather than as a dark bar, and the dark ink title keeps its contrast either
+// way. There is deliberately **no footer scrim**: the footer carries no text, so
+// a bottom gradient would only paint a band of deeper blue over the map.
 const HEADER_SCRIM =
   "linear-gradient(180deg, rgba(47,169,225,0.96) 0%, rgba(47,169,225,0.9) 30%, rgba(47,169,225,0.5) 62%, rgba(47,169,225,0) 100%)";
-const FOOTER_SCRIM =
-  "linear-gradient(0deg, rgba(47,169,225,0.94) 0%, rgba(47,169,225,0.62) 45%, rgba(47,169,225,0) 100%)";
 
 /** Frames the title takes to fade away once the opening line has been spoken. */
 const TITLE_FADE_FRAMES = 9;
@@ -120,24 +120,66 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
     };
   }, [safeArea]);
   // Static camera: resolved once from the *complete* ranking set, before any
-  // frame is rendered, and reused for every frame. Nothing here depends on the
-  // currently revealed province, so the viewport cannot drift while playing.
+  // frame is rendered. The opening move (below) only *interpolates* between this
+  // viewport and the whole-country one — it never re-fits anything per frame, so
+  // the framing itself cannot drift while playing.
   // The platform safe area only feeds the fit rectangles — it never introduces
   // per-frame movement, so the camera is just as stable as before.
-  const framing = useMemo(
+  const framingStage = useMemo(
+    () => ({
+      mapRect: design.map,
+      labelRect: design.label,
+      keepOutRect: design.keepOut,
+    }),
+    [design],
+  );
+  const framingTarget = useMemo(
     () =>
       resolveViewport(
         geoData as ThailandGeoJson,
         project.rankings.map((ranking) => ranking.provinceId),
         project.framing,
         MAP_STAGE,
-        {
-          mapRect: design.map,
-          labelRect: design.label,
-          keepOutRect: design.keepOut,
-        },
+        framingStage,
       ),
-    [project, design],
+    [project, framingStage],
+  );
+  // Where the camera starts: the whole country, resolved through the very same
+  // code path (`fitMode: 'full-country'`) instead of inventing a second
+  // projection. Overriding only the mode keeps every other option (zoom limits,
+  // safe area, presets) identical between the two ends of the move.
+  const framingIntro = useMemo(
+    () =>
+      resolveViewport(
+        geoData as ThailandGeoJson,
+        project.rankings.map((ranking) => ranking.provinceId),
+        { ...(project.framing ?? {}), fitMode: "full-country" as const },
+        MAP_STAGE,
+        framingStage,
+      ),
+    [project, framingStage],
+  );
+  // Intro camera move. The window comes straight from the timeline — it *is* the
+  // opening line — so the camera and the voice start and stop together. Outside
+  // the window the camera is pinned to one of the two resolved viewports, which
+  // means a video without an opening line is pixel-identical to the old one.
+  const cameraProgress =
+    timeline.camera.end > timeline.camera.start
+      ? interpolate(
+          frame,
+          [timeline.camera.start, timeline.camera.end],
+          [0, 1],
+          { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+        )
+      : 1;
+  const framing = useMemo(
+    () =>
+      !framingTarget.cameraMove || cameraProgress >= 1
+        ? framingTarget
+        : cameraProgress <= 0
+          ? framingIntro
+          : blendViewport(framingIntro, framingTarget, cameraProgress),
+    [framingIntro, framingTarget, cameraProgress],
   );
   const intro = spring({ frame, fps, config: { damping: 18, stiffness: 90 } });
   // The title is only an intro card: it leaves the stage as soon as the opening
@@ -219,11 +261,11 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             framing={framing}
           />
         </div>
-        {/* Scrims that keep the header/footer text readable when a province or a
-            leader line runs underneath. The header one fades out with the title. */}
-        {/* The scrims follow the safe-area margins: they cover exactly the band
-            the platform UI occupies (status bar on top, caption + description on
-            the bottom), so the header/footer text stays readable there. */}
+        {/* Scrim that keeps the header text readable when a province or a leader
+            line runs underneath. It follows the safe-area top margin, so it
+            covers exactly the band the platform status bar occupies. The bottom
+            band has no scrim: the footer carries no text and the map runs to the
+            canvas edge. */}
         <div
           style={{
             position: "absolute",
@@ -234,30 +276,6 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             background: HEADER_SCRIM,
             opacity: titleOpacity,
             pointerEvents: "none",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 48,
-            right: 48,
-            textAlign: "center",
-            height: Math.max(260, design.bottomMargin + 120),
-            background: FOOTER_SCRIM,
-            pointerEvents: "none",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            left: design.core.x0,
-            right: design.rightMargin,
-            top: Math.max(8, design.core.y0 - 18),
-            height: 1,
-            background:
-              "linear-gradient(90deg, transparent, rgba(224,102,26,.6), transparent)",
-            opacity: titleOpacity,
           }}
         />
         {/* Every headline is anchored to the safe rectangle: below the status

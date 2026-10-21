@@ -21,6 +21,7 @@ import {
   MAP_OVERLAY_BANDS,
   MAP_SAFE_INSET,
   MAP_STAGE,
+  blendViewport,
   createProjection,
   describeViewport,
   normalizeFramingOptions,
@@ -110,7 +111,14 @@ test('场景B：排名区域集中在南部时，视口移动到南部且不出�
 
 test('场景C：离群排名区域按覆盖阈值权衡，重点区域不会被压小', () => {
   const rankings = [...EAST.slice(0, 9), OUTLIER]; // 9 个东部 + 1 个遥远南部
-  const balanced = view(rankings, {});
+
+  // 默认必须全部可见：一个排名项都不能被静默排除。
+  const all = view(rankings, {});
+  assert.equal(all.coveredCount, 10);
+  assert.deepEqual(all.droppedIds, []);
+
+  // 显式把阈值降到 0.9 才允许用离群府换放大。
+  const balanced = view(rankings, {coverageThreshold: 0.9, allowOutlierDrop: true});
 
   assert.equal(balanced.totalCount, 10);
   assert.equal(balanced.coveredCount, 9);
@@ -136,25 +144,48 @@ test('场景C：离群排名区域按覆盖阈值权衡，重点区域不会被�
   );
 
   // 覆盖优先策略：阈值调低后允许丢更多，但不会低于阈值下限。
-  const loose = view(rankings, {coverageThreshold: 0.5, framingPreset: 'tight'});
+  const loose = view(rankings, {
+    coverageThreshold: 0.5,
+    framingPreset: 'tight',
+    allowOutlierDrop: true,
+  });
   assert.ok(loose.coverage >= 0.5 * 0.8 - 1e-9, 'tight 最多把阈值放宽 20%');
   assert.ok(loose.droppedIds.length >= 1);
 
   // 严格覆盖模式给出显式提示。
-  const strict = view(rankings, {coverageThreshold: 0.9, strictCoverage: true});
+  const strict = view(rankings, {
+    coverageThreshold: 0.9,
+    allowOutlierDrop: true,
+    strictCoverage: true,
+  });
   assert.ok(strict.warnings.some((warning) => warning.includes('严格覆盖模式')));
 
-  // 覆盖阈值校验：非法值回退默认而不是产生不可解释的结果。
-  assert.equal(view(rankings, {coverageThreshold: 5}).coverageThreshold, 0.9);
-  assert.equal(view(rankings, {coverageThreshold: 0}).coverageThreshold, 0.9);
-  assert.equal(view(rankings, {coverageThreshold: 'abc'}).coverageThreshold, 0.9);
+  // 覆盖阈值校验：非法值回退默认（1 = 全部可见）而不是产生不可解释的结果。
+  assert.equal(
+    view(rankings, {coverageThreshold: 5}).coverageThreshold,
+    DEFAULT_FRAMING_OPTIONS.coverageThreshold,
+  );
+  assert.equal(
+    view(rankings, {coverageThreshold: 0}).coverageThreshold,
+    DEFAULT_FRAMING_OPTIONS.coverageThreshold,
+  );
+  assert.equal(
+    view(rankings, {coverageThreshold: 'abc'}).coverageThreshold,
+    DEFAULT_FRAMING_OPTIONS.coverageThreshold,
+  );
 });
 
 test('场景D：排名区域南北分散时自动扩大取景，且遵守 zoom 限制', () => {
   const spread = ['TH-57', 'TH-50', 'TH-10', 'TH-20', 'TH-83', OUTLIER];
   const framed = view(spread, {});
 
-  assert.equal(framed.coverage, 1, '分散数据允许扩大取景以容纳全部区域');
+  // 覆盖阈值 0.9 × 6 条 = floor(5.4) = 5：最多剔 1 个，且只可能是增益最大的
+  // 最南离群府；剔除后 zoom 增益必须仍然很小（分散数据不值得大幅放大）。
+  assert.ok(framed.coverage >= 5 / 6, `覆盖 ${framed.coverage}`);
+  assert.ok(
+    framed.droppedIds.every((id) => id === OUTLIER),
+    `只允许剔离群府：${framed.droppedIds}`,
+  );
   assert.ok(zoomRatio(framed) < 1.2, `分散数据不应放大：${zoomRatio(framed).toFixed(2)} 倍`);
   assert.ok(framed.center[1] > 10 && framed.center[1] < 18, `中心纬度 ${framed.center[1]}`);
   assert.ok(framed.zoom >= DEFAULT_FRAMING_OPTIONS.minZoom);
@@ -415,4 +446,161 @@ test('缓存有效且 77 个排名区域的规模可控', () => {
   const cached = view(all, {});
   assert.ok(Date.now() - cachedStarted < 30, '相同输入必须命中缓存');
   assert.equal(cached.scale, framed.scale);
+});
+
+test('开场运镜：两端就是「全图」和「取景」两个视口，中间单调推进且画面中心不漂', () => {
+  const ids = EAST;
+  const intro = view(ids, {fitMode: 'full-country'});
+  const target = view(ids, {});
+
+  // 端点即两个已解析的视口：起帧是全景，落帧是 data-driven 取景。
+  assert.equal(blendViewport(intro, target, 0), intro);
+  assert.equal(blendViewport(intro, target, 1), target);
+  // 越界进度按端点夹紧，不会飞过头。
+  assert.equal(blendViewport(intro, target, -1), intro);
+  assert.equal(blendViewport(intro, target, 2), target);
+
+  const cx = (target.rect.x0 + target.rect.x1) / 2;
+  const cy = (target.rect.y0 + target.rect.y1) / 2;
+  let previousZoom = intro.zoom;
+  for (const progress of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+    const mid = blendViewport(intro, target, progress);
+    assert.ok(mid.zoom > previousZoom, `zoom 必须单调推进：${progress} → ${mid.zoom}`);
+    previousZoom = mid.zoom;
+    // 目标区域始终落在画面中心：镜头平移的是地理，不是把地图推出取景框。
+    const projected = createProjection(mid)(mid.center);
+    assert.ok(Math.abs(projected[0] - cx) < 1e-6, `x 偏移 ${projected[0] - cx}`);
+    assert.ok(Math.abs(projected[1] - cy) < 1e-6, `y 偏移 ${projected[1] - cy}`);
+    // 中心不会跑到泰国以外（经度 97~106，纬度 5~21）。
+    assert.ok(mid.center[0] > 97 && mid.center[0] < 106, `中心经度 ${mid.center[0]}`);
+    assert.ok(mid.center[1] > 5 && mid.center[1] < 21, `中心纬度 ${mid.center[1]}`);
+  }
+
+  // 中点取 zoom 的对数中点（等比推进，观感速度均匀）。
+  const half = blendViewport(intro, target, 0.5);
+  assert.ok(Math.abs(half.zoom - (intro.zoom + target.zoom) / 2) < 1e-9);
+  // 非相机字段沿用落点视口：取景框、标签安全区不随运镜变化。
+  assert.deepEqual(half.rect, target.rect);
+  assert.deepEqual(half.labelRect, target.labelRect);
+
+  // 起止本来就一致（例如取景模式就是 full-country）时，运镜是空操作。
+  const sameCountry = view(ids, {fitMode: 'full-country'});
+  const still = blendViewport(sameCountry, sameCountry, 0.5);
+  assert.equal(still.zoom, sameCountry.zoom);
+  // 浮点重算会有 ~1e-12 的误差，只要视觉上完全不动即可。
+  assert.ok(Math.abs(still.translate[0] - sameCountry.translate[0]) < 1e-6);
+  assert.ok(Math.abs(still.translate[1] - sameCountry.translate[1]) < 1e-6);
+});
+
+test('开场运镜开关：默认开启，cameraMove=false 会写进视口并给出语义', () => {
+  assert.equal(view(EAST, {}).cameraMove, true);
+  assert.equal(view(EAST, {cameraMove: false}).cameraMove, false);
+  const {warnings} = normalizeFramingOptions({cameraMove: 'yes'});
+  assert.ok(warnings.some((warning) => warning.includes('cameraMove')));
+});
+
+test('跨度再大也不剔除：极端南北链保持全覆盖，且最多退到全景（不会比全景更小）', () => {
+  // 清莱（最北）+ 那拉提瓦（最南）：任何更大的跨度都不存在了。
+  const extreme = ['TH-57', 'TH-96'];
+  const framed = view(extreme, {});
+  const full = view(extreme, {fitMode: 'full-country'});
+
+  assert.equal(framed.coveredCount, 2, '最北与最南必须同时可见');
+  assert.deepEqual(framed.droppedIds, []);
+  assert.ok(
+    framed.zoom >= full.zoom - 1e-6,
+    `取景不应比全景更小：${framed.zoom} < ${full.zoom}`,
+  );
+  assert.ok(
+    Math.abs(framed.zoom - full.zoom) < 1e-6,
+    `全国跨度应正好退到全景：${framed.zoom} vs ${full.zoom}`,
+  );
+  // 全景兜底用的是整块可用区，不再额外内缩 padding。
+  assert.ok(
+    framed.rect.y1 - framed.rect.y0 <= framed.stage.height,
+    '全景兜底必须用满可用区',
+  );
+
+  // 全部府：就是标准全景，且一个都不少。
+  const all = view(
+    geojson.features.map((feature) => feature.properties.provinceId),
+    {},
+  );
+  assert.equal(all.coveredCount, 77);
+  assert.equal(all.coverage, 1);
+  assert.ok(Math.abs(all.zoom - full.zoom) < 1e-6, `77 府应等于全景：${all.zoom}`);
+
+  // 稍小于全国的集合仍然放大（不会因为兜底被压成全景）。
+  const six = view(['TH-54', 'TH-56', 'TH-57', 'TH-64', 'TH-65', 'TH-86'], {});
+  assert.equal(six.coveredCount, 6);
+  assert.ok(six.zoom > full.zoom + 0.1, `6 府应比全景更近：${six.zoom}`);
+});
+
+test('旧客户端只发 coverageThreshold=0.9 也绝不会隐藏排名府（必须显式 allowOutlierDrop）', () => {
+  const rankings = [...EAST.slice(0, 9), OUTLIER];
+
+  // 老页面 / 老请求体里残留的 0.9：没有开关就不能生效。
+  const legacy = view(rankings, {coverageThreshold: 0.9});
+  assert.equal(legacy.allowOutlierDrop, false);
+  assert.equal(legacy.coverageThreshold, 1, '未开启剔除时阈值必须被夹到 1');
+  assert.equal(legacy.coveredCount, 10);
+  assert.deepEqual(legacy.droppedIds, []);
+  assert.ok(
+    legacy.warnings.some((warning) => warning.includes('allowOutlierDrop')),
+    '必须给出可定位的提示',
+  );
+
+  // 显式开启之后才允许用离群府换放大。
+  const optIn = view(rankings, {coverageThreshold: 0.9, allowOutlierDrop: true});
+  assert.equal(optIn.allowOutlierDrop, true);
+  assert.equal(optIn.coveredCount, 9);
+  assert.deepEqual(optIn.droppedIds, [OUTLIER]);
+
+  // 非布尔值不会被当作开启。
+  assert.equal(view(rankings, {allowOutlierDrop: 'yes'}).allowOutlierDrop, false);
+});
+
+test('南北长链：国土左右留白必须对称（画面里不偏左也不偏右）', () => {
+  const cases = {
+    泰北5府加春蓬: ['TH-54', 'TH-56', 'TH-57', 'TH-64', 'TH-65', 'TH-86'],
+    极北加极南: ['TH-57', 'TH-96'],
+    南北加东西: ['TH-57', 'TH-96', 'TH-58', 'TH-22'],
+  };
+  for (const [name, ids] of Object.entries(cases)) {
+    const framed = view(ids, {});
+    assert.equal(framed.coveredCount, ids.length, `${name}：排名府必须全部可见`);
+
+    const path = geoPath(createProjection(framed));
+    const [[x0], [x1]] = path.bounds(geojson);
+    const left = x0;
+    const right = MAP_STAGE.width - x1;
+    const center = (x0 + x1) / 2;
+
+    // 国土在画面内的左右留白必须相等（容差 2px，只有取整误差）。
+    assert.ok(
+      Math.abs(left - right) < 2,
+      `${name}：左留白 ${left.toFixed(1)} / 右留白 ${right.toFixed(1)} 不对称`,
+    );
+    // 并且国土中心就是画布中心。
+    assert.ok(
+      Math.abs(center - MAP_STAGE.width / 2) < 2,
+      `${name}：国土中心 ${center.toFixed(1)} 偏离画布中心 ${MAP_STAGE.width / 2}`,
+    );
+    // 排名府仍然全部落在画面里（居中不会把任何一个推出取景框）。
+    for (const diagnostic of framed.diagnostics) {
+      assert.ok(diagnostic.inside, `${name}：${diagnostic.provinceId} 被推出了画面`);
+    }
+  }
+});
+
+test('能贴着两侧时就不要留空：跨度覆盖全国宽度时左右留白几乎为零', () => {
+  // 泰北 5 府 + 春蓬：纵向被排名府撑满，横向刚好铺到画布两侧。
+  const framed = view(['TH-54', 'TH-56', 'TH-57', 'TH-64', 'TH-65', 'TH-86'], {});
+  const path = geoPath(createProjection(framed));
+  const [[x0], [x1]] = path.bounds(geojson);
+  const left = x0;
+  const right = MAP_STAGE.width - x1;
+  assert.ok(Math.abs(left - right) < 2, `左右不对称：${left.toFixed(1)} / ${right.toFixed(1)}`);
+  assert.ok(left < MAP_STAGE.width * 0.05, `左右留白应几乎为零，实际 ${left.toFixed(1)}px`);
+  assert.ok(right < MAP_STAGE.width * 0.05, `左右留白应几乎为零，实际 ${right.toFixed(1)}px`);
 });

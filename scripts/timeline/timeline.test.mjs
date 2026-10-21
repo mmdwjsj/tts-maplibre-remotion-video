@@ -187,6 +187,43 @@ test('没有音频元数据时退回名义时长，同样按名次/府名两段�
   assert.equal(name.duration, 72);
 });
 
+test('开场运镜窗口正好等于开场白：开口起、说完停', () => {
+  const timeline = buildTimeline(project());
+  const opening = timeline.segments[0];
+
+  assert.equal(opening.part, 'opening');
+  // 开场白 1s：运镜从第 0 帧到第 30 帧，和旁白完全重合（不含 1s 静音尾巴）。
+  assert.deepEqual(timeline.camera, {start: opening.start, end: opening.revealAt});
+  assert.deepEqual(timeline.camera, {start: 0, end: 30});
+  // 运镜在开口说完那一帧就停住；开场白后的 1s 静音里镜头已经是静止的了，
+  // 所以第一个名次段开始时绝不会还在动。
+  assert.ok(timeline.camera.end <= timeline.segments[1].start);
+  assert.equal(timeline.segments[1].start - timeline.camera.end, 30);
+  // 标题也是开场白说完才消失，所以「全景 + 标题」这一帧运镜刚好落位。
+  assert.equal(timeline.camera.end, timeline.titleEndFrames);
+});
+
+test('没有开场白时运镜窗口为空：镜头从第 0 帧就停在取景上', () => {
+  const timeline = buildTimeline(
+    project({
+      audioSegments: [
+        {type: 'ranking', rank: 3, part: 'rank', duration: 0.5, gapAfter: 0},
+        {type: 'ranking', rank: 3, part: 'name', duration: 1.5, gapAfter: 1},
+      ],
+    }),
+  );
+  assert.deepEqual(timeline.camera, {start: 0, end: 0});
+});
+
+test('无音频兜底路径：运镜填满静音片头，Studio 预览也能看到推进', () => {
+  const timeline = buildTimeline(
+    project({audioSegments: undefined, introDuration: 1.5, finalHoldDuration: 0}),
+  );
+  assert.equal(timeline.introFrames, 45);
+  assert.deepEqual(timeline.camera, {start: 0, end: 45});
+  assert.equal(timeline.camera.end, timeline.titleEndFrames);
+});
+
 test('同一份输入重复调用结果一致（缓存不改变语义）', () => {
   const input = project();
   const first = buildTimeline(input);

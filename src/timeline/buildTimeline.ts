@@ -45,6 +45,24 @@ export type TimelineSegment = {
   end: number;
 };
 
+/**
+ * The intro camera move, in frames.
+ *
+ * The video opens on the whole country (title card) and flies into the resolved
+ * framing while the opening line is spoken: `start` is the instant the opening
+ * narration begins, `end` the instant it finishes. Camera and voice therefore
+ * share one window — the move never overlaps the first ranking line, so the map
+ * is already standing still when the first province lights up.
+ *
+ * `start === end` means "no move": there is no opening line (or it has no
+ * measurable length), so the camera simply sits on the target framing from frame
+ * 0, exactly like before this feature existed.
+ */
+export type CameraMove = {
+  start: number;
+  end: number;
+};
+
 export type VideoTimeline = {
   introFrames: number;
   /**
@@ -55,6 +73,8 @@ export type VideoTimeline = {
    * no opening line there is nothing to finish, so the header stays.
    */
   titleEndFrames: number;
+  /** Intro camera move: whole country → resolved framing, across the opening line. */
+  camera: CameraMove;
   segments: TimelineSegment[];
   finalStart: number;
   totalFrames: number;
@@ -142,6 +162,12 @@ const buildFromAudioSegments = (
   return {
     introFrames: 0,
     titleEndFrames: opening ? opening.revealAt : 0,
+    // The camera rides exactly on the opening line: it starts the frame the
+    // welcome line starts and lands the frame it ends (an `opening` segment has
+    // nothing to reveal, so `revealAt` is the end of its narration).
+    camera: opening
+      ? {start: opening.start, end: opening.revealAt}
+      : {start: 0, end: 0},
     segments,
     finalStart,
     // Round up so the rendered video is never shorter than the audio track.
@@ -205,6 +231,9 @@ const buildFromNarrationDurations = (
     // The silent intro card is the only thing before the first reveal here, so
     // the header lives exactly as long as it does.
     titleEndFrames: introFrames,
+    // No audio to follow: the move fills the silent intro card instead, so the
+    // Remotion Studio preview shows the same fly-in the MP4 does.
+    camera: {start: 0, end: introFrames},
     segments,
     finalStart: previousFrame,
     totalFrames: Math.max(

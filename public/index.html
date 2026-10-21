@@ -518,8 +518,8 @@
       opacity: 0.62;
     }
 
-    /* Title / footer bands, tinted like the render scrims (sea-blue gradient):
-       the map runs behind them, the floating label does not. */
+    /* Title band scrim, tinted like the render (sea-blue gradient). Only the
+       header band has one; the footer band carries no text and stays clear. */
     .map rect.band {
       fill: rgba(47, 169, 225, 0.82);
     }
@@ -1121,7 +1121,7 @@
     <!-- 第二排：地图取景控件 + 生成音频与视频（按钮在右） -->
     <section class="card row actions">
       <div class="framing-fields">
-        <h2>4 / 地图取景 <span class="sub">生成前一次性计算，全片固定镜头</span></h2>
+        <h2>4 / 地图取景 <span class="sub">生成前一次性计算；开场运镜落在开场白上，之后镜头固定</span></h2>
 
         <div class="field-grid">
           <div class="field">
@@ -1143,15 +1143,15 @@
           </div>
 
           <div class="field">
-            <label for="coverageThreshold" title="coverageThreshold">覆盖阈值：</label>
-            <input
-              id="coverageThreshold"
-              type="number"
-              min="0.25"
-              max="1"
-              step="0.05"
-              value="0.9"
-            />
+            <label
+              for="allowOutlierDrop"
+              title="allowOutlierDrop：关闭时所有排名府必须全部在画面内；开启后才允许为了放大而隐藏离群府"
+              >离群剔除：</label
+            >
+            <select id="allowOutlierDrop">
+              <option value="false" selected>关闭（全部排名府都在画面内）</option>
+              <option value="true">开启（允许隐藏离群府换取放大）</option>
+            </select>
           </div>
 
           <div class="field">
@@ -1159,6 +1159,28 @@
             <select id="strictCoverage">
               <option value="false">关闭</option>
               <option value="true">开启（覆盖不足时告警）</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="contextFloor" title="contextFloor"
+              >上下文地板：</label
+            >
+            <select id="contextFloor">
+              <option value="">跟随松紧（默认）</option>
+              <option value="0">0 关闭（排名府贴满画面）</option>
+              <option value="0.22">0.22 紧（尽量贴两侧）</option>
+              <option value="0.3">0.30 中</option>
+              <option value="0.45">0.45 松（保住版图轮廓）</option>
+              <option value="0.6">0.60 很松</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="cameraMove" title="cameraMove">开场运镜：</label>
+            <select id="cameraMove">
+              <option value="">跟随默认（开启）</option>
+              <option value="true">开启（全图 → 取景，随开场白）</option>
+              <option value="false">关闭（全片固定镜头）</option>
             </select>
           </div>
         </div>
@@ -1355,12 +1377,23 @@
 
     /** Reads the framing controls into the request payload. */
     const framingState = () => {
+      const allowOutlierDrop = $("#allowOutlierDrop").value === "true";
       const framing = {
         fitMode: $("#fitMode").value,
         framingPreset: $("#framingPreset").value,
-        coverageThreshold: Number($("#coverageThreshold").value),
+        allowOutlierDrop,
+        // 未显式开启剔除时固定为 1：所有排名府都必须在画面内。
+        coverageThreshold: allowOutlierDrop ? 0.9 : 1,
         strictCoverage: $("#strictCoverage").value === "true",
       };
+
+      if ($("#contextFloor").value !== "") {
+        framing.contextFloor = Number($("#contextFloor").value);
+      }
+
+      if ($("#cameraMove").value !== "") {
+        framing.cameraMove = $("#cameraMove").value === "true";
+      }
 
       if (framing.fitMode === "manual") {
         framing.manualCenter = [
@@ -1590,7 +1623,7 @@
           : "");
     };
 
-    const renderFramingInfo = (viewport) => {
+    const renderFramingInfo = (viewport, introViewport) => {
       const rows = [
         [
           "取景模式",
@@ -1616,6 +1649,31 @@
         [
           "相对全图放大",
           `${Math.pow(2, viewport.zoom - viewport.referenceZoom).toFixed(2)} 倍`,
+        ],
+        [
+          "开场运镜",
+          viewport.cameraMove === false
+            ? "关闭（全片固定镜头）"
+            : introViewport &&
+                Math.abs(introViewport.zoom - viewport.zoom) > 0.01
+              ? `全图 zoom ${Number(introViewport.zoom).toFixed(2)} → 取景 zoom ${viewport.zoom.toFixed(2)}（开场白期间推进，说完停住）`
+              : "起止一致，无需移动",
+        ],
+        [
+          "画面横跨经度",
+          `${Number(viewport.visibleLonSpan ?? 0).toFixed(2)}° / 全国 ${Number(
+            viewport.countryLonSpan ?? 0,
+          ).toFixed(2)}°（${Math.round(
+            ((viewport.visibleLonSpan ?? 0) / (viewport.countryLonSpan || 1)) * 100,
+          )}%）`,
+        ],
+        [
+          "上下文地板",
+          viewport.contextFloor > 0
+            ? `${Math.round(viewport.contextFloor * 100)}%${
+                viewport.contextFloorApplied ? "（已后退保底图）" : "（未触发）"
+              }`
+            : "关闭（排名府贴满画面）",
         ],
         [
           "画面外区域",
@@ -1652,7 +1710,7 @@
     const describeIds = (ids) =>
       ids.map((id) => `${id}${provinceNames[id] ? ` ${provinceNames[id]}` : ""}`).join("、");
 
-    const drawFramingPreview = ({ viewport, paths, provinces, audit, safeArea, labelAudit }) => {
+    const drawFramingPreview = ({ viewport, introViewport, paths, provinces, audit, safeArea, labelAudit }) => {
       provinceNames = Object.fromEntries(
         paths.map((item) => [item.id, item.name || ""]),
       );
@@ -1691,15 +1749,12 @@
       const band = viewport.labelRect;
       const map = $("#previewMap");
       map.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      // Draw order mirrors the render: provinces, then the title/footer bands
-      // (the map starts below the title band and runs behind the footer band),
-      // then the framing window and the label-safe band.
+      // Draw order mirrors the render: provinces, then the title band scrim
+      // (only the header has one — the footer carries no text, so the map runs
+      // to the canvas edge), then the framing window and the label-safe band.
       map.innerHTML =
         shapes +
         `<rect class="band" x="0" y="0" width="${width}" height="${band.y0}"></rect>` +
-        `<rect class="band" x="0" y="${band.y1}" width="${width}" height="${
-          height - band.y1
-        }"></rect>` +
         `<rect class="label-band" x="${band.x0}" y="${band.y0}" width="${
           band.x1 - band.x0
         }" height="${band.y1 - band.y0}"></rect>` +
@@ -1707,7 +1762,7 @@
           y1 - y0
         }"></rect>` +
         `<text class="band-label" x="28" y="${band.y0 - 16}">标题区（地图从这条线以下开始）</text>` +
-        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束）</text>` +
+        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束，无遮罩）</text>` +
         // 安全区遮罩只在这里（网页预览）出现，且只有开关打开时才画。
         (safeAreaPreviewEnabled() && safeArea
           ? safeAreaOverlaySvg(safeArea, viewport.stage)
@@ -1722,12 +1777,18 @@
         : "";
 
       $("#previewNote").textContent =
-        `固定镜头 · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
-        `${viewport.zoom.toFixed(2)}；地图横向铺满，上下避开标题区与页脚区（` +
+        `${viewport.cameraMove === false ? "固定镜头" : "开场运镜后固定镜头"} · ${framingModeLabel(viewport.mode)} / ${viewport.preset} · zoom ` +
+        `${viewport.zoom.toFixed(2)}${
+          viewport.cameraMove === false
+            ? ""
+            : `（开场白期间由全图 zoom ${Number(
+                introViewport?.zoom ?? viewport.zoom,
+              ).toFixed(2)} 推进到此，解说完镜头停住，之后全片不动）`
+        }；地图横向铺满，上下避开标题区与页脚区（` +
         `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
-        `海蓝色为标题/页脚遮盖带，虚线为取景框，点线为浮动标签安全区` +
+        `浅蓝色为标题遮盖带，虚线为取景框，点线为浮动标签安全区` +
         platformNote;
-      $("#framingInfo").innerHTML = renderFramingInfo(viewport);
+      $("#framingInfo").innerHTML = renderFramingInfo(viewport, introViewport);
       renderSafeAreaInfo(safeArea, labelAudit);
     };
 
@@ -2349,8 +2410,10 @@
     [
       "#fitMode",
       "#framingPreset",
-      "#coverageThreshold",
+      "#allowOutlierDrop",
       "#strictCoverage",
+      "#contextFloor",
+      "#cameraMove",
       "#manualLon",
       "#manualLat",
       "#manualZoom",

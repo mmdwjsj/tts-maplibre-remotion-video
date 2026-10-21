@@ -16,7 +16,7 @@
  * persisted, so two consecutive videos never share a framing result.
  */
 
-import {geoMercator, geoPath} from 'd3-geo';
+import {geoBounds, geoMercator, geoPath} from 'd3-geo';
 import type {GeoPermissibleObjects, GeoProjection} from 'd3-geo';
 import type {Geometry} from 'geojson';
 
@@ -114,10 +114,28 @@ export type FramingOptions = {
   framingPreset?: FramingPreset;
   /** Fraction of ranking entries that must stay inside the frame (count based). */
   coverageThreshold?: number;
+  /**
+   * Explicit opt-in for dropping ranked provinces. While `false` (the default)
+   * `coverageThreshold` is forced to 1 — every ranked province stays visible, so
+   * an old client that still posts `0.9` can never hide a province by accident.
+   */
+  allowOutlierDrop?: boolean;
   /** Extra inset ratio applied to the fit rect, 0 - 0.3. */
   padding?: number;
+  /**
+   * Context floor: the smallest share of the country's longitude span the frame
+   * is allowed to show, as a fraction (`0` disables it, preset default when
+   * omitted). See `PRESET_RULES.contextFloor`.
+   */
+  contextFloor?: number;
   minZoom?: number;
   maxZoom?: number;
+  /**
+   * Intro camera move: open on the whole country and fly into the resolved
+   * framing across the opening line. `false` freezes the camera on the resolved
+   * framing from frame 0 (the pre-move behaviour).
+   */
+  cameraMove?: boolean;
   /** When true, a coverage shortfall is reported as a loud warning. */
   strictCoverage?: boolean;
   manualCenter?: [number, number];
@@ -129,8 +147,14 @@ export type ResolvedFramingOptions = {
   framingPreset: FramingPreset;
   coverageThreshold: number;
   padding: number;
+  /** Resolved context floor (fraction of the country lon span, 0 = off). */
+  contextFloor: number;
   minZoom: number;
   maxZoom: number;
+  /** Resolved intro camera move switch. */
+  cameraMove: boolean;
+  /** Resolved opt-in for dropping ranked provinces (default: never drop). */
+  allowOutlierDrop: boolean;
   strictCoverage: boolean;
   manualCenter?: [number, number];
   manualZoom?: number;
@@ -139,24 +163,50 @@ export type ResolvedFramingOptions = {
 export const DEFAULT_FRAMING_OPTIONS: ResolvedFramingOptions = {
   fitMode: 'data-driven',
   framingPreset: 'balanced',
-  coverageThreshold: 0.9,
+  // 1 = every ranked province must be visible. Outlier dropping is opt-in only:
+  // lowering this below 1 lets the camera trade one far-away province for zoom.
+  coverageThreshold: 1,
+  allowOutlierDrop: false,
   padding: -1,
+  contextFloor: -1,
   minZoom: 5,
   maxZoom: 12,
+  cameraMove: true,
   strictCoverage: false,
 };
 
-/** Per preset behaviour. `padding: -1` means "use the preset default". */
+/**
+ * Per preset behaviour. `padding`/`contextFloor: -1` mean "use the preset default".
+ *
+ * `contextFloor` exists because `contain` fitting alone has one blind spot: when
+ * every ranked region sits on a north-south line, the frame is filled by a
+ * narrow strip and the camera zooms until only a sliver of the country is left
+ * — white land on white land, with no coastline or border to place it. The floor
+ * keeps a minimum horizontal context by stepping the camera back just enough.
+ * It is deliberately low for `tight` (hug the ranked regions first) and only
+ * engages when the frame would otherwise show less than that share.
+ */
 const PRESET_RULES: Record<
   FramingPreset,
-  {padding: number; minZoomGain: number; coverageFactor: number; coverageBonus: number}
+  {
+    padding: number;
+    minZoomGain: number;
+    coverageFactor: number;
+    coverageBonus: number;
+    contextFloor: number;
+  }
 > = {
-  // Zoom in hard: dropping outliers is cheap, a tiny zoom gain is enough.
-  tight: {padding: 0.02, minZoomGain: 1.03, coverageFactor: 0.8, coverageBonus: 0},
+  // Presets differ in padding / context floor only. `coverageFactor` and
+  // `coverageBonus` are kept at 1 / 0 on purpose: no preset silently drops a
+  // ranked province. Dropping only happens when `coverageThreshold` is set
+  // below 1 explicitly, which the UI exposes as a separate choice.
+  //
+  // Zoom in hard: when dropping is enabled, a tiny zoom gain is enough.
+  tight: {padding: 0.02, minZoomGain: 1.03, coverageFactor: 1, coverageBonus: 0, contextFloor: 0.22},
   // Balance coverage and readability.
-  balanced: {padding: 0.06, minZoomGain: 1.1, coverageFactor: 1, coverageBonus: 0},
+  balanced: {padding: 0.06, minZoomGain: 1.1, coverageFactor: 1, coverageBonus: 0, contextFloor: 0.3},
   // Show more geography: only drop a region when it unlocks a big zoom gain.
-  wide: {padding: 0.1, minZoomGain: 1.35, coverageFactor: 1, coverageBonus: 0.1},
+  wide: {padding: 0.1, minZoomGain: 1.35, coverageFactor: 1, coverageBonus: 0, contextFloor: 0.45},
 };
 
 /* -------------------------------------------------------------------------- *
@@ -179,10 +229,101 @@ const isFiniteNumber = (value: unknown): value is number =>
 const normalizeId = (value: unknown): string =>
   String(value ?? '').trim().toUpperCase();
 
+/** Longitude bounds of a GeoJSON collection, in degrees (null when unmeasurable). */
+const countryLonBounds = (geojson: FramingGeoJson): {west: number; east: number} | null => {
+  try {
+    const [[west], [east]] = geoBounds(geojson as unknown as GeoPermissibleObjects);
+    if (!Number.isFinite(west) || !Number.isFinite(east)) return null;
+    const span = east - west;
+    return span > 0 && span <= 360 ? {west, east} : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Longitude span the frame currently shows, measured on the projection itself. */
+const visibleLonSpanOf = (
+  projection: GeoProjection,
+  stage: FramingStage,
+  rect: FramingRect,
+): number => {
+  const midY = (rect.y0 + rect.y1) / 2;
+  const left = projection.invert?.([0, midY]) ?? null;
+  const right = projection.invert?.([stage.width, midY]) ?? null;
+  if (!left || !right) return 0;
+  const span = right[0] - left[0];
+  return Number.isFinite(span) && span > 0 ? span : 0;
+};
+
+/**
+ * Rescales a projection while keeping the geography under `pivot` exactly where
+ * it is on screen. Calling `scale()` alone rescales around the projection's
+ * translate origin, which slides the framed area off centre; re-anchoring on the
+ * pivot is the cheap fix and needs no `center()` juggling.
+ */
+const rescaleKeepingPivot = (
+  projection: GeoProjection,
+  scale: number,
+  pivot: [number, number],
+): GeoProjection => {
+  const anchor = projection.invert?.(pivot) ?? null;
+  const centerPoint: [number, number] =
+    anchor && Number.isFinite(anchor[0]) && Number.isFinite(anchor[1])
+      ? [anchor[0], anchor[1]]
+      : [DEFAULT_CENTER[0], DEFAULT_CENTER[1]];
+  const origin = geoMercator().scale(scale).translate([0, 0]);
+  const projected = origin(centerPoint) ?? [0, 0];
+  return geoMercator()
+    .scale(scale)
+    .translate([pivot[0] - projected[0], pivot[1] - projected[1]]);
+};
+
+/**
+ * Slides the map horizontally so the country's midpoint sits on the **canvas**
+ * midpoint, i.e. the empty water left and right of the landmass is split evenly.
+ *
+ * It only applies when the frame is at least as wide as the country — i.e. the
+ * camera has been stepped back to (or past) the whole-country view. That happens
+ * whenever the ranked provinces form a long north-south chain: `contain` fitting
+ * centres the *ranked* bbox, so the narrow strip ends up in the middle of the
+ * frame while the whole landmass sits off to one side and the other side turns
+ * into a wide empty sea. Because the country already fits inside the frame,
+ * re-centring on it cannot push a ranked province out of frame (every ranked
+ * province is inside the country), it only splits the empty margin across both
+ * sides instead of leaving it all on one.
+ *
+ * `x = translate[0] + scale * λ` in d3-geo's Mercator, so moving the geography
+ * by Δλ pixels is `scale * Δλ`. To bring λ_center onto `cx` the translate must
+ * move by `scale * (λ_current - λ_center)` — the *current* longitude minus the
+ * wanted one. (Sign matters: the opposite order pushes the map twice as far off
+ * centre instead of centring it.)
+ */
+const alignCountryLonCenter = (
+  projection: GeoProjection,
+  stage: FramingStage,
+  rect: FramingRect,
+  lonCenter: number,
+  lonSpan: number,
+): GeoProjection => {
+  if (!(lonSpan > 0) || !projection.invert) return projection;
+  const visible = visibleLonSpanOf(projection, stage, rect);
+  if (!(visible >= lonSpan - 1e-6)) return projection;
+  const cx = stage.width / 2;
+  const cy = rectCenter(rect)[1];
+  const current = projection.invert([cx, cy]);
+  if (!current || !Number.isFinite(current[0])) return projection;
+  const scale = projection.scale();
+  const shift = (scale * (current[0] - lonCenter) * Math.PI) / 180;
+  if (!Number.isFinite(shift) || Math.abs(shift) < 0.5) return projection;
+  const [tx, ty] = projection.translate();
+  return geoMercator()
+    .scale(scale)
+    .translate([tx + shift, ty]);
+};
+
 /* -------------------------------------------------------------------------- *
  * Result types
  * -------------------------------------------------------------------------- */
-
 export type FramingDiagnostic = {
   provinceId: string;
   /** 1-based position inside the ranking input. */
@@ -203,6 +344,8 @@ export type FramingViewport = {
   requestedMode: FitMode;
   preset: FramingPreset;
   coverageThreshold: number;
+  /** False (default) means no ranked province was allowed to leave the frame. */
+  allowOutlierDrop: boolean;
   padding: number;
   stage: FramingStage;
   /** The area the ranked regions are fitted into (full canvas minus edge safety). */
@@ -216,6 +359,16 @@ export type FramingViewport = {
   coveredCount: number;
   totalCount: number;
   coverage: number;
+  /** Context floor actually used (fraction of the country lon span, 0 = off). */
+  contextFloor: number;
+  /** Longitude span of the whole country, in degrees — the floor's reference. */
+  countryLonSpan: number;
+  /** Longitude span the final frame shows, in degrees. */
+  visibleLonSpan: number;
+  /** True when the context floor stepped the camera back for this viewport. */
+  contextFloorApplied: boolean;
+  /** Whether the intro camera move (whole country → this framing) is enabled. */
+  cameraMove: boolean;
   keptIds: string[];
   droppedIds: string[];
   missingIds: string[];
@@ -284,6 +437,16 @@ export const normalizeFramingOptions = (
     }
   }
 
+  if (input.allowOutlierDrop !== undefined) {
+    // Anything but the literal `true` keeps dropping off (no truthy coercion).
+    options.allowOutlierDrop = input.allowOutlierDrop === true;
+    if (typeof input.allowOutlierDrop !== 'boolean') {
+      warnings.push(
+        `allowOutlierDrop 必须是布尔值（收到 ${String(input.allowOutlierDrop)}），已按 false 处理（全部排名区域可见）`,
+      );
+    }
+  }
+
   if (input.coverageThreshold !== undefined) {
     if (isFiniteNumber(input.coverageThreshold) && input.coverageThreshold > 0 && input.coverageThreshold <= 1) {
       options.coverageThreshold = input.coverageThreshold;
@@ -294,6 +457,17 @@ export const normalizeFramingOptions = (
     }
   }
 
+  // Hard guard: a sub-1 threshold alone can never hide a ranked province. Every
+  // ranked province must be on screen unless dropping was explicitly enabled —
+  // this also protects against stale clients that still post the old `0.9`.
+  if (!options.allowOutlierDrop && options.coverageThreshold < 1) {
+    warnings.push(
+      `coverageThreshold=${options.coverageThreshold} 需要同时设置 allowOutlierDrop=true 才会生效；` +
+        '已按 1（全部排名区域可见）处理',
+    );
+    options.coverageThreshold = 1;
+  }
+
   const presetPadding = PRESET_RULES[options.framingPreset].padding;
   options.padding = presetPadding;
   if (input.padding !== undefined) {
@@ -301,6 +475,18 @@ export const normalizeFramingOptions = (
       options.padding = input.padding;
     } else {
       warnings.push(`padding 必须是 [0, 0.3] 之间的数值，已回退为 ${presetPadding}`);
+    }
+  }
+
+  const presetContextFloor = PRESET_RULES[options.framingPreset].contextFloor;
+  options.contextFloor = presetContextFloor;
+  if (input.contextFloor !== undefined) {
+    if (isFiniteNumber(input.contextFloor) && input.contextFloor >= 0 && input.contextFloor < 1) {
+      options.contextFloor = input.contextFloor;
+    } else {
+      warnings.push(
+        `contextFloor 必须是 [0, 1) 之间的数值（0 = 关闭，收到 ${String(input.contextFloor)}），已回退为 ${presetContextFloor}`,
+      );
     }
   }
 
@@ -327,6 +513,16 @@ export const normalizeFramingOptions = (
 
   if (input.strictCoverage !== undefined) {
     options.strictCoverage = input.strictCoverage === true;
+  }
+
+  if (input.cameraMove !== undefined) {
+    if (typeof input.cameraMove === 'boolean') {
+      options.cameraMove = input.cameraMove;
+    } else {
+      warnings.push(
+        `cameraMove 必须是布尔值（收到 ${String(input.cameraMove)}），已回退为 ${options.cameraMove}`,
+      );
+    }
   }
 
   if (input.manualCenter !== undefined) {
@@ -459,6 +655,10 @@ type GeoIndex = {
   /** Features whose geometry could not be measured (locatable warnings). */
   invalidIds: string[];
   referenceScale: number;
+  /** Longitude span of the whole country, in degrees (context-floor reference). */
+  lonSpan: number;
+  /** Longitude of the country's horizontal midpoint (0 when unmeasurable). */
+  lonCenter: number;
 };
 
 const indexCache = new WeakMap<object, GeoIndex>();
@@ -517,12 +717,15 @@ const buildGeoIndex = (geojson: FramingGeoJson): GeoIndex => {
     usableFeatures.push(feature);
   }
 
+  const lonBounds = countryLonBounds(geojson);
   const index: GeoIndex = {
     featureById,
     metrics,
     usable: {type: 'FeatureCollection', features: usableFeatures},
     invalidIds,
     referenceScale: referenceProjection.scale(),
+    lonSpan: lonBounds ? lonBounds.east - lonBounds.west : 0,
+    lonCenter: lonBounds ? (lonBounds.west + lonBounds.east) / 2 : 0,
   };
   indexCache.set(geojson as unknown as object, index);
   return index;
@@ -583,7 +786,16 @@ const selectFramed = (
     0,
     1,
   );
-  const minKept = Math.max(1, Math.min(total, Math.ceil(target * total - 1e-9)));
+  // `floor`, not `ceil`: with `ceil`, any list shorter than ~10 entries could
+  // never drop a single outlier (ceil(0.9 × 6) = 6), and one far-away province
+  // then drags the whole north-south chain into the frame and forces the camera
+  // out to the full country width. The fractional slot is exactly the outlier
+  // allowance the threshold promises, so rounding it down is the honest read.
+  // Full coverage (the default): nothing may leave the frame, so there is no
+  // trade to evaluate at all. Dropping requires the explicit opt-in.
+  if (!options.allowOutlierDrop || target >= 1 - 1e-9) return candidates.slice();
+
+  const minKept = Math.max(1, Math.min(total, Math.floor(target * total + 1e-9)));
 
   let kept = candidates.slice();
   let best = fitScale(kept, rect);
@@ -650,9 +862,12 @@ const cacheKey = (
     options.fitMode,
     options.framingPreset,
     options.coverageThreshold,
+    options.allowOutlierDrop ? 1 : 0,
     options.padding,
+    options.contextFloor,
     options.minZoom,
     options.maxZoom,
+    options.cameraMove ? 1 : 0,
     options.strictCoverage ? 1 : 0,
     options.manualCenter ? options.manualCenter.join(',') : '-',
     options.manualZoom ?? '-',
@@ -762,6 +977,7 @@ export const resolveViewport = (
   };
 
   let projection: GeoProjection;
+  let contextFloorApplied = false;
   if (mode === 'full-country') {
     // The authored rect: always shows the whole country, now across the whole
     // canvas instead of the smaller box the map used to be confined to.
@@ -788,6 +1004,31 @@ export const resolveViewport = (
       toCollection(framed) as unknown as GeoPermissibleObjects,
     );
 
+    // Context floor. `contain` fitting is driven by the ranked regions alone, so
+    // a set that happens to sit on one north-south line fills the frame with a
+    // narrow strip and zooms until the picture holds a sliver of the country
+    // only — white land on white land, with no coast or border left to place it.
+    // Stepping back until the frame shows `contextFloor × country lon span`
+    // restores the silhouette. Stepping back can never push a ranked region out
+    // of frame, so coverage is untouched; it only trades size for recognisability
+    // and only when the frame would otherwise be narrower than the floor.
+    if (options.contextFloor > 0 && index.lonSpan > 0) {
+      const floorSpan = index.lonSpan * options.contextFloor;
+      const visibleSpan = visibleLonSpanOf(projection, safeStage, rect);
+      if (visibleSpan > 0 && visibleSpan < floorSpan - 1e-6) {
+        projection = rescaleKeepingPivot(
+          projection,
+          projection.scale() * (visibleSpan / floorSpan),
+          rectCenter(rect),
+        );
+        contextFloorApplied = true;
+        warnings.push(
+          `自动取景画面只横跨 ${visibleSpan.toFixed(2)}° 经度（全国 ${index.lonSpan.toFixed(2)}°），` +
+            `为保住版图可辨识度已后退到 ${floorSpan.toFixed(2)}°（contextFloor=${options.contextFloor}）`,
+        );
+      }
+    }
+
     // Hard zoom limits so a pathological dataset can never zoom to infinity or
     // collapse into the whole country by accident.
     const rawScale = projection.scale();
@@ -796,19 +1037,33 @@ export const resolveViewport = (
       // `scale()` alone would keep the translate of the *unclamped* fit, which
       // slides the intended centre off frame. Re-anchor on the same geographic
       // centre the frame currently shows.
-      const anchor = projection.invert?.(rectCenter(rect)) ?? null;
-      const centerPoint: [number, number] =
-        anchor && Number.isFinite(anchor[0]) && Number.isFinite(anchor[1])
-          ? [anchor[0], anchor[1]]
-          : [DEFAULT_CENTER[0], DEFAULT_CENTER[1]];
-      const target = rectCenter(rect);
-      const origin = geoMercator().scale(bounded).translate([0, 0]);
-      const projectedCenter = origin(centerPoint) ?? [0, 0];
-      projection = geoMercator()
-        .scale(bounded)
-        .translate([target[0] - projectedCenter[0], target[1] - projectedCenter[1]]);
+      projection = rescaleKeepingPivot(projection, bounded, rectCenter(rect));
       warnings.push(
         `自动取景 zoom ${scaleToZoom(rawScale).toFixed(2)} 超出限制 [${options.minZoom}, ${options.maxZoom}]，已收敛为 ${scaleToZoom(bounded).toFixed(2)}`,
+      );
+    }
+
+    // Never smaller than the whole country. A ranked set that spans the country
+    // (or a north-south chain covering its full height) can fit *below* the
+    // full-country scale, because the framing rect is inset by `padding` while
+    // the full-country view uses the whole free area. Showing the country with a
+    // margin around it is strictly worse than showing the country: fall back to
+    // the full-country fit, which still contains every ranked province.
+    const wholeCountryScale = fitWholeCountry(authoredRect).scale();
+    if (projection.scale() < wholeCountryScale - 1e-6 && framed.length >= candidates.length) {
+      projection = fitWholeCountry(authoredRect);
+    }
+
+    // Every ranked province is inside the frame: with the frame wider than the
+    // country, re-centre horizontally on the country instead of on the narrow
+    // ranked strip, so the empty margin is split instead of piling up on one side.
+    if (framed.length >= candidates.length) {
+      projection = alignCountryLonCenter(
+        projection,
+        safeStage,
+        rect,
+        index.lonCenter,
+        index.lonSpan,
       );
     }
   }
@@ -838,7 +1093,7 @@ export const resolveViewport = (
     if (options.strictCoverage) {
       warnings.push(
         `严格覆盖模式：当前视口未能覆盖全部排名区域（${covered.length}/${totalCount}，目标 ${options.coverageThreshold}）。` +
-          '如需全部覆盖，可改用 framingPreset=wide、提高 coverageThreshold，或改用 manual 手动取景。',
+          '如需全部覆盖，请把 coverageThreshold 设为 1（默认值即全部可见），或改用 manual 手动取景。',
       );
     }
   }
@@ -891,7 +1146,13 @@ export const resolveViewport = (
     requestedMode: options.fitMode,
     preset: options.framingPreset,
     coverageThreshold: options.coverageThreshold,
+    allowOutlierDrop: options.allowOutlierDrop,
     padding: options.padding,
+    contextFloor: options.contextFloor,
+    countryLonSpan: index.lonSpan,
+    visibleLonSpan: visibleLonSpanOf(projection, safeStage, rect),
+    contextFloorApplied,
+    cameraMove: options.cameraMove,
     stage: safeStage,
     rect,
     labelRect: safeLabelRect,
@@ -933,6 +1194,66 @@ export const createProjection = (viewport: FramingViewport): GeoProjection =>
     .translate([viewport.translate[0], viewport.translate[1]]);
 
 /**
+ * Ease-in-out (cubic). A camera move that starts and stops linearly reads as a
+ * mechanical slide; easing it is what makes it feel like a camera.
+ */
+const easeInOut = (t: number): number =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+/**
+ * Blends two resolved viewports into the camera position `progress` of the way
+ * from `from` to `to` (`0` = exactly `from`, `1` = exactly `to`).
+ *
+ * This is the whole intro camera move: the fit itself is still resolved once
+ * (start = whole country, end = the data-driven framing), and every frame in
+ * between is a plain interpolation of *zoom* and *geographic centre*. Zoom is
+ * interpolated in log space, so the perceived zoom speed is constant (moving
+ * from zoom 3.2 to 7.9 must not accelerate halfway), and the centre is
+ * interpolated in lon/lat, which keeps the camera aimed at the place it passes
+ * over instead of drifting sideways.
+ *
+ * Everything else (fit rects, label box, keep-out, coverage diagnostics) is
+ * taken from `to`: those describe the destination, and nothing reads them until
+ * the move is over.
+ */
+export const blendViewport = (
+  from: FramingViewport,
+  to: FramingViewport,
+  progress: number,
+): FramingViewport => {
+  const t = clamp(Number.isFinite(progress) ? progress : 1, 0, 1);
+  if (t <= 0) return from;
+  if (t >= 1) return to;
+
+  const eased = easeInOut(t);
+  const zoom = from.zoom + (to.zoom - from.zoom) * eased;
+  const scale = zoomToScale(zoom);
+  const center: [number, number] = [
+    from.center[0] + (to.center[0] - from.center[0]) * eased,
+    from.center[1] + (to.center[1] - from.center[1]) * eased,
+  ];
+  // Keep the interpolated centre on the *destination* frame centre: the camera
+  // slides over the geography rather than the geography sliding out of frame.
+  const pivot = rectCenter(to.rect);
+  const origin = geoMercator().scale(scale).translate([0, 0]);
+  const projected = origin(center) ?? [0, 0];
+  const translate: [number, number] = [
+    pivot[0] - projected[0],
+    pivot[1] - projected[1],
+  ];
+  const projection = geoMercator().scale(scale).translate(translate);
+
+  return {
+    ...to,
+    center,
+    zoom,
+    scale,
+    translate,
+    visibleLonSpan: visibleLonSpanOf(projection, to.stage, to.rect),
+  };
+};
+
+/**
  * Projects every province with the resolved viewport into SVG path data.
  *
  * The React map component builds the same projection inline (per frame); this
@@ -966,7 +1287,20 @@ export const describeViewport = (viewport: FramingViewport): string[] => {
         ? ` · 画面外：${viewport.droppedIds.join('、')}`
         : ' · 全部排名区域在画面内'),
     `全图参考 zoom ${viewport.referenceZoom.toFixed(2)} · 相对全图放大 ${Math.pow(2, viewport.zoom - viewport.referenceZoom).toFixed(2)} 倍`,
+    viewport.cameraMove
+      ? '开场运镜 开启（开场白期间由全图推到上述取景，解说完镜头停住）'
+      : '开场运镜 关闭（全片固定镜头）',
   ];
+  if (viewport.countryLonSpan > 0) {
+    lines.push(
+      `画面横跨经度 ${viewport.visibleLonSpan.toFixed(2)}°（全国 ${viewport.countryLonSpan.toFixed(2)}°，占 ${(
+        (viewport.visibleLonSpan / viewport.countryLonSpan) * 100
+      ).toFixed(0)}%）` +
+        (viewport.contextFloor > 0
+          ? ` · 上下文地板 ${(viewport.contextFloor * 100).toFixed(0)}%${viewport.contextFloorApplied ? '（已触发后退）' : ''}`
+          : ' · 上下文地板已关闭'),
+    );
+  }
   if (viewport.missingIds.length) {
     lines.push(`未匹配到 GeoJSON：${viewport.missingIds.join('、')}`);
   }
