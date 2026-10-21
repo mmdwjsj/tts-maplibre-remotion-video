@@ -1288,7 +1288,7 @@ export const describeViewport = (viewport: FramingViewport): string[] => {
         : ' · 全部排名区域在画面内'),
     `全图参考 zoom ${viewport.referenceZoom.toFixed(2)} · 相对全图放大 ${Math.pow(2, viewport.zoom - viewport.referenceZoom).toFixed(2)} 倍`,
     viewport.cameraMove
-      ? '开场运镜 开启（开场白期间由全图推到上述取景，解说完镜头停住）'
+      ? '开场运镜 开启（开局 0.5s 后由全图推到上述取景，第一个名次念完镜头停住）'
       : '开场运镜 关闭（全片固定镜头）',
   ];
   if (viewport.countryLonSpan > 0) {

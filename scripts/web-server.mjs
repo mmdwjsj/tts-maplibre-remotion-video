@@ -199,6 +199,24 @@ try {
   );
 }
 
+/**
+ * The timeline module owns the intro camera window (start delay + landing beat),
+ * so the audit file written below reports exactly what the renderer will do
+ * instead of a second, hand-copied rule. Falls back to the documented default if
+ * the TypeScript module cannot be loaded.
+ */
+let timelineModule = null;
+try {
+  timelineModule = await import("../src/timeline/buildTimeline.ts");
+} catch (error) {
+  console.warn(
+    `[timeline] 无法加载时间轴模块，运镜窗口将使用内置默认值：${error.message}`,
+  );
+}
+const CAMERA_START_DELAY_SECONDS =
+  timelineModule?.CAMERA_START_DELAY_SECONDS ?? 0.5;
+const CAMERA_END_SECONDS = timelineModule?.CAMERA_END_SECONDS ?? null;
+
 let provinceGeoJson = null;
 try {
   provinceGeoJson = JSON.parse(
@@ -964,15 +982,39 @@ const server = http.createServer(async (req, res) => {
           ? +(segments[0].start + segments[0].duration).toFixed(3)
           : 0;
 
-      // The intro camera move rides on the opening line: it starts the instant
-      // the welcome line starts and lands the instant it ends. Recorded in the
-      // timeline so a rendered MP4 can be traced back to its camera path.
+      // The intro camera move: it starts `CAMERA_START_DELAY_SECONDS` after the
+      // video begins and lands the instant the *first* ranking line has read out
+      // its rank ("อันดับ 5"), so the province name is spoken in front of a
+      // standing camera. A rank piece has no highlight of its own, which is why
+      // its end (`start + duration`, silence excluded) is the landing beat.
+      // `CAMERA_END_SECONDS` (when set) pins the landing beat to an absolute time
+      // instead. Recorded in the timeline so a rendered MP4 can be traced back to
+      // its camera path.
+      const cameraDelay = Math.max(0, CAMERA_START_DELAY_SECONDS);
+      const firstRankSegment = segments.find(
+        (segment) => segment.part === "rank",
+      );
+      const automaticLandSeconds = firstRankSegment
+        ? firstRankSegment.start + firstRankSegment.duration
+        : segments[0]?.type === "opening"
+          ? segments[0].start + segments[0].duration
+          : 0;
+      const cameraLandSeconds =
+        typeof CAMERA_END_SECONDS === "number" &&
+        Number.isFinite(CAMERA_END_SECONDS)
+          ? Math.max(CAMERA_END_SECONDS, cameraDelay + 1 / fps)
+          : automaticLandSeconds;
       const cameraMove =
-        segments[0]?.type === "opening" && viewport?.cameraMove !== false
+        viewport?.cameraMove !== false && cameraLandSeconds > 0
           ? {
               enabled: true,
-              start: +segments[0].start.toFixed(3),
-              end: +(segments[0].start + segments[0].duration).toFixed(3),
+              // Keep a beat of travel when the rank is announced faster than the
+              // delay (mirrors `CAMERA_MIN_FRAMES` in the timeline module).
+              start: +Math.min(
+                cameraDelay,
+                Math.max(0, cameraLandSeconds - 6 / fps),
+              ).toFixed(3),
+              end: +cameraLandSeconds.toFixed(3),
             }
           : { enabled: false, start: 0, end: 0 };
 

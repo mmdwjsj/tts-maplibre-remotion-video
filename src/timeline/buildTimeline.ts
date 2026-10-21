@@ -48,20 +48,49 @@ export type TimelineSegment = {
 /**
  * The intro camera move, in frames.
  *
- * The video opens on the whole country (title card) and flies into the resolved
- * framing while the opening line is spoken: `start` is the instant the opening
- * narration begins, `end` the instant it finishes. Camera and voice therefore
- * share one window — the move never overlaps the first ranking line, so the map
- * is already standing still when the first province lights up.
+ * The video opens on the whole country (title card). The camera then flies into
+ * the resolved framing between two fixed beats:
  *
- * `start === end` means "no move": there is no opening line (or it has no
- * measurable length), so the camera simply sits on the target framing from frame
- * 0, exactly like before this feature existed.
+ *  - `start`: `CAMERA_START_DELAY_SECONDS` after the video begins, so the first
+ *    frame or two hold still on the whole country instead of already moving;
+ *  - `end`: the instant the *first* ranking line finishes announcing its rank
+ *    ("อันดับ 5" / "第五名"). The province name that follows is still spoken with
+ *    the camera standing still, so the first highlight never lands mid-move.
+ *
+ * `start === end` means "no move": there is nothing to land on (no ranking line
+ * and no opening line), so the camera simply sits on the target framing from
+ * frame 0, exactly like before this feature existed.
  */
 export type CameraMove = {
   start: number;
   end: number;
 };
+
+/**
+ * Seconds after the video begins before the camera starts moving.
+ * 运镜开始时间
+ * This is the knob for the *start* of the move: `0` starts on frame 0, `0.5`
+ * holds the whole-country shot for half a second first.
+ */
+export const CAMERA_START_DELAY_SECONDS = 1;
+
+/**
+ * Hard override for the *end* of the move, in seconds from the video start.
+ * 运镜结束时间
+ * `null` (default) means "automatic": land when the first ranking line has
+ * finished announcing its rank (`อันดับ 5` / `第五名`). Set a number to pin the
+ * landing beat to an absolute time instead — it is clamped to at least one frame
+ * after the start, so a too-early value degrades into a very short move rather
+ * than a negative one.
+ */
+export const CAMERA_END_SECONDS: number | null = null;
+
+/**
+ * Shortest move, in frames. If the first rank announcement is spoken faster
+ * than the start delay, the opening still needs a beat to travel: the start is
+ * pulled back instead of collapsing into a one-frame cut.
+ */
+const CAMERA_MIN_FRAMES = 6;
 
 export type VideoTimeline = {
   introFrames: number;
@@ -92,6 +121,41 @@ const timelineCache = new WeakMap<ProjectData, VideoTimeline>();
 
 const toFrames = (seconds: number, fps: number) =>
   Math.round(Math.max(0, seconds) * fps);
+
+/**
+ * Resolves the intro camera window from the segments themselves.
+ *
+ * The landing beat is the end of the first `rank` piece — a rank piece has
+ * nothing to light up, so its `revealAt` *is* the instant its words stop being
+ * spoken (`อันดับ 5`), and it excludes the silence that follows. No `rank`
+ * piece (a video with no ranking lines) falls back to the opening line's end, so
+ * the move still has somewhere sensible to land.
+ *
+ * The start is `CAMERA_START_DELAY_SECONDS`, except when that would leave less
+ * than `CAMERA_MIN_FRAMES` of travel: then it is pulled back towards frame 0 so
+ * the shot still glides in instead of snapping.
+ */
+const resolveCameraMove = (
+  segments: TimelineSegment[],
+  fps: number,
+): CameraMove => {
+  const firstRank = segments.find((segment) => segment.part === "rank");
+  const automatic = firstRank ? firstRank.revealAt : (segments[0]?.revealAt ?? 0);
+  const override =
+    CAMERA_END_SECONDS === null || !Number.isFinite(CAMERA_END_SECONDS)
+      ? null
+      : toFrames(CAMERA_END_SECONDS, fps);
+  // An override still has to land after the start; a value that would invert the
+  // window is pushed one frame past it instead of being silently ignored.
+  const delay = toFrames(CAMERA_START_DELAY_SECONDS, fps);
+  const landAt = override === null ? automatic : Math.max(override, delay + 1);
+  if (landAt <= 0) return {start: 0, end: 0};
+
+  return {
+    start: Math.min(delay, Math.max(0, landAt - CAMERA_MIN_FRAMES)),
+    end: landAt,
+  };
+};
 
 /** The spoken countdown reveals the lowest rank first and #1 last. */
 const sortByRevealOrder = (rankings: RankingDatum[]) =>
@@ -162,12 +226,9 @@ const buildFromAudioSegments = (
   return {
     introFrames: 0,
     titleEndFrames: opening ? opening.revealAt : 0,
-    // The camera rides exactly on the opening line: it starts the frame the
-    // welcome line starts and lands the frame it ends (an `opening` segment has
-    // nothing to reveal, so `revealAt` is the end of its narration).
-    camera: opening
-      ? {start: opening.start, end: opening.revealAt}
-      : {start: 0, end: 0},
+    // Starts CAMERA_START_DELAY_SECONDS in, lands when the first rank has been
+    // announced — the province is then named in front of a standing camera.
+    camera: resolveCameraMove(segments, fps),
     segments,
     finalStart,
     // Round up so the rendered video is never shorter than the audio track.
@@ -231,9 +292,9 @@ const buildFromNarrationDurations = (
     // The silent intro card is the only thing before the first reveal here, so
     // the header lives exactly as long as it does.
     titleEndFrames: introFrames,
-    // No audio to follow: the move fills the silent intro card instead, so the
-    // Remotion Studio preview shows the same fly-in the MP4 does.
-    camera: {start: 0, end: introFrames},
+    // No audio to follow: the same two beats still apply, measured inside the
+    // silent intro card, so the Remotion Studio preview shows the MP4's fly-in.
+    camera: resolveCameraMove(segments, fps),
     segments,
     finalStart: previousFrame,
     totalFrames: Math.max(

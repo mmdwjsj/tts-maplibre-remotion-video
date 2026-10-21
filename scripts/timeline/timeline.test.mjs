@@ -187,23 +187,23 @@ test('没有音频元数据时退回名义时长，同样按名次/府名两段�
   assert.equal(name.duration, 72);
 });
 
-test('开场运镜窗口正好等于开场白：开口起、说完停', () => {
+test('开场运镜：视频开始 0.5s 后起步，第一个名次念完就落位', () => {
   const timeline = buildTimeline(project());
   const opening = timeline.segments[0];
+  const firstRank = timeline.segments[1];
+  const firstName = timeline.segments[2];
 
   assert.equal(opening.part, 'opening');
-  // 开场白 1s：运镜从第 0 帧到第 30 帧，和旁白完全重合（不含 1s 静音尾巴）。
-  assert.deepEqual(timeline.camera, {start: opening.start, end: opening.revealAt});
-  assert.deepEqual(timeline.camera, {start: 0, end: 30});
-  // 运镜在开口说完那一帧就停住；开场白后的 1s 静音里镜头已经是静止的了，
-  // 所以第一个名次段开始时绝不会还在动。
-  assert.ok(timeline.camera.end <= timeline.segments[1].start);
-  assert.equal(timeline.segments[1].start - timeline.camera.end, 30);
-  // 标题也是开场白说完才消失，所以「全景 + 标题」这一帧运镜刚好落位。
-  assert.equal(timeline.camera.end, timeline.titleEndFrames);
+  assert.equal(firstRank.part, 'rank');
+  // 0.5s = 15 帧起步；第一条名次的「อันดับ 3」说完（第 75 帧）落位。
+  assert.deepEqual(timeline.camera, {start: 15, end: 75});
+  assert.equal(timeline.camera.end, firstRank.revealAt);
+  // 名次段后面的静音不算进窗口，落位早于府名开口 —— 第一个府点亮时镜头已经停住。
+  assert.ok(timeline.camera.end <= firstName.revealAt);
+  assert.equal(timeline.camera.end, firstName.start);
 });
 
-test('没有开场白时运镜窗口为空：镜头从第 0 帧就停在取景上', () => {
+test('没有开场白时运镜照样成立：延迟起步、第一个名次说完落位', () => {
   const timeline = buildTimeline(
     project({
       audioSegments: [
@@ -212,16 +212,18 @@ test('没有开场白时运镜窗口为空：镜头从第 0 帧就停在取景�
       ],
     }),
   );
-  assert.deepEqual(timeline.camera, {start: 0, end: 0});
+  // 名次段只有 0.5s（15 帧），比延迟还短：起点被前移，保住最短行程（6 帧）。
+  assert.deepEqual(timeline.camera, {start: 9, end: 15});
 });
 
-test('无音频兜底路径：运镜填满静音片头，Studio 预览也能看到推进', () => {
+test('无音频兜底路径：同样的两个节拍，Studio 预览也能看到推进', () => {
   const timeline = buildTimeline(
     project({audioSegments: undefined, introDuration: 1.5, finalHoldDuration: 0}),
   );
   assert.equal(timeline.introFrames, 45);
-  assert.deepEqual(timeline.camera, {start: 0, end: 45});
-  assert.equal(timeline.camera.end, timeline.titleEndFrames);
+  // 片头静音 45 帧后开始第一个名次（3.2s × 20% ≈ 19 帧）：15 帧起步、64 帧落位。
+  assert.deepEqual(timeline.camera, {start: 15, end: 64});
+  assert.equal(timeline.camera.end, timeline.segments[0].revealAt);
 });
 
 test('同一份输入重复调用结果一致（缓存不改变语义）', () => {

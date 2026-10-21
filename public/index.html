@@ -1121,7 +1121,7 @@
     <!-- 第二排：地图取景控件 + 生成音频与视频（按钮在右） -->
     <section class="card row actions">
       <div class="framing-fields">
-        <h2>4 / 地图取景 <span class="sub">生成前一次性计算；开场运镜落在开场白上，之后镜头固定</span></h2>
+        <h2>4 / 地图取景 <span class="sub">生成前一次性计算；开场白开始 0.5s 后推镜，第一个名次念完落位，之后镜头固定</span></h2>
 
         <div class="field-grid">
           <div class="field">
@@ -1179,7 +1179,7 @@
             <label for="cameraMove" title="cameraMove">开场运镜：</label>
             <select id="cameraMove">
               <option value="">跟随默认（开启）</option>
-              <option value="true">开启（全图 → 取景，随开场白）</option>
+              <option value="true">开启（全图 → 取景：开局 0.5s 起，第一个名次念完停）</option>
               <option value="false">关闭（全片固定镜头）</option>
             </select>
           </div>
@@ -1656,7 +1656,7 @@
             ? "关闭（全片固定镜头）"
             : introViewport &&
                 Math.abs(introViewport.zoom - viewport.zoom) > 0.01
-              ? `全图 zoom ${Number(introViewport.zoom).toFixed(2)} → 取景 zoom ${viewport.zoom.toFixed(2)}（开场白期间推进，说完停住）`
+              ? `全图 zoom ${Number(introViewport.zoom).toFixed(2)} → 取景 zoom ${viewport.zoom.toFixed(2)}（开局 0.5s 起推进，第一个名次「第 N 名」念完停住）`
               : "起止一致，无需移动",
         ],
         [
@@ -1781,9 +1781,9 @@
         `${viewport.zoom.toFixed(2)}${
           viewport.cameraMove === false
             ? ""
-            : `（开场白期间由全图 zoom ${Number(
+            : `（开局 0.5s 后由全图 zoom ${Number(
                 introViewport?.zoom ?? viewport.zoom,
-              ).toFixed(2)} 推进到此，解说完镜头停住，之后全片不动）`
+              ).toFixed(2)} 推进到此，第一个名次念完镜头停住，之后全片不动）`
         }；地图横向铺满，上下避开标题区与页脚区（` +
         `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
         `浅蓝色为标题遮盖带，虚线为取景框，点线为浮动标签安全区` +
