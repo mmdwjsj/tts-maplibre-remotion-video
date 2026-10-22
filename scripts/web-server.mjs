@@ -325,13 +325,25 @@ const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
   const elements = [];
 
   if (labelPlacementModule) {
-    for (const diagnostic of viewport.diagnostics ?? []) {
+    const diagnostics = viewport.diagnostics ?? [];
+    for (const diagnostic of diagnostics) {
+      // Same placement rule the map component uses: the panel avoids the
+      // province itself, treats the other ranked provinces as soft obstacles and
+      // walks away from the canvas centre — otherwise this audit would check a
+      // layout the render never produces.
+      const own = diagnostic.bboxPx;
+      const toRect = (bbox) => ({x0: bbox[0][0], y0: bbox[0][1], x1: bbox[1][0], y1: bbox[1][1]});
       const placement = labelPlacementModule.placeLabel({
         cx: diagnostic.center[0],
         cy: diagnostic.center[1],
         rect: viewport.mapRect ?? viewport.rect,
         panelBounds: viewport.labelRect,
         keepOut: viewport.keepOutRect ?? null,
+        focus: {x: viewport.stage.width / 2, y: viewport.stage.height / 2},
+        avoid: [toRect(own)],
+        obstacles: diagnostics
+          .filter((other) => other.provinceId !== diagnostic.provinceId)
+          .map((other) => toRect(other.bboxPx)),
       });
       elements.push({
         id: `label:${diagnostic.provinceId}`,

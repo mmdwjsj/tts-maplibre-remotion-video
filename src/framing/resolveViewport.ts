@@ -332,6 +332,15 @@ export type FramingDiagnostic = {
   areaPx: number;
   sizePx: [number, number];
   center: [number, number];
+  /**
+   * The projected bounding box, `[[x0, y0], [x1, y1]]`.
+   *
+   * The floating label uses it to sit *next to* the province instead of on top
+   * of it (and the safe-area audit uses the very same rectangle, so what the
+   * audit checks is what the render draws). `sizePx` / `center` alone are not
+   * enough: a panel has to know where the province's edges are.
+   */
+  bboxPx: [[number, number], [number, number]];
   /** Distance to the component-wise median of all matched regions, in pixels. */
   distanceFromCenterPx: number;
   /** Distance outside the frame, 0 when the region is fully inside. */
@@ -1113,6 +1122,7 @@ export const resolveViewport = (
         Math.round(metric.bbox[1][1] - metric.bbox[0][1]),
       ],
       center: [Math.round(metric.centroid[0]), Math.round(metric.centroid[1])],
+      bboxPx: metric.bbox,
       distanceFromCenterPx: Math.round(
         Math.hypot(metric.centroid[0] - median[0], metric.centroid[1] - median[1]),
       ),

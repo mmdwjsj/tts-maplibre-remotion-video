@@ -39,6 +39,8 @@ export type LabelPlacement = {
   /** 面板矩形，方便交给安全区审计。 */
   panelRect: LabelRect;
   flipped: boolean;
+  /** 面板落在锚点的哪个方向（hx/vy 各取 -1/0/1），供调试与测试用。 */
+  side: {hx: number; vy: number};
   /** 无法完全避开禁入区时给出可定位的问题；避开时为 null。 */
   conflict: LabelConflict | null;
 };
@@ -54,6 +56,19 @@ export type PlaceLabelInput = {
   /** 右侧互动栏禁入区（已含额外间距）。null / 省略表示没有禁入区。 */
   keepOut?: LabelRect | null;
   box?: {width: number; height: number};
+  /**
+   * 画面中心（画布或安全区中心）。面板默认放在它的**反方向**：府在左下角就
+   * 把标签放到右上，府在右上角就放到左下——这正是行业里 callout 标注的常见
+   * 做法，标签永远落在偏空的那一侧，而不是压在府上。
+   */
+  focus?: {x: number; y: number} | null;
+  /**
+   * 必须让开的矩形：当前府的投影包围盒。面板压到它上面就等于盖住了主角，
+   * 代价低于越界、高于其它一切。
+   */
+  avoid?: LabelRect[] | null;
+  /** 尽量让开的矩形：其它府（尤其已点亮府）的包围盒。 */
+  obstacles?: LabelRect[] | null;
 };
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -69,31 +84,43 @@ const overlapArea = (a: LabelRect, b: LabelRect): number => {
 };
 
 /**
- * 候选位置的代价：先保证不越出安全区（越界 1px 的代价远大于压住禁入区
- * 1px²），其次尽量不压住右侧互动栏。0 表示完全合格。
+ * 候选位置的代价，按**优先级**逐级比较，而不是加权求和。
+ *
+ * 顺序就是产品优先级：先把面板完整塞进安全区，再保证不盖住当前府（主角），
+ * 其次不压右侧互动栏，最后尽量少压其它府。分级的理由是「越界 1px」和「压住
+ * 府 1000px²」不该互相抵消——加权总分会让一个越界的候选因为多躲开一点陆地
+ * 反而胜出。
  */
-const evaluate = (
-  panel: LabelRect,
-  bounds: LabelRect,
-  keepOut: LabelRect | null,
-): {keepOutArea: number; overflowPx: number; penalty: number} => {
-  const keepOutArea = keepOut ? overlapArea(panel, keepOut) : 0;
-  const overflowPx = Math.max(
-    bounds.x0 - panel.x0,
-    panel.x1 - bounds.x1,
-    bounds.y0 - panel.y0,
-    panel.y1 - bounds.y1,
-    0,
-  );
-  return {keepOutArea, overflowPx, penalty: overflowPx * 1e6 + keepOutArea};
+type CandidateScore = {
+  overflowPx: number;
+  avoidArea: number;
+  keepOutArea: number;
+  otherArea: number;
 };
+
+const better = (a: CandidateScore, b: CandidateScore): boolean => {
+  if (Math.abs(a.overflowPx - b.overflowPx) > 1e-6) return a.overflowPx < b.overflowPx;
+  if (Math.abs(a.avoidArea - b.avoidArea) > 1e-6) return a.avoidArea < b.avoidArea;
+  if (Math.abs(a.keepOutArea - b.keepOutArea) > 1e-6) return a.keepOutArea < b.keepOutArea;
+  return a.otherArea < b.otherArea;
+};
+
+const totalOverlap = (panel: LabelRect, rects: LabelRect[]): number =>
+  rects.reduce((sum, rect) => sum + overlapArea(panel, rect), 0);
 
 /**
  * 计算标签面板与引线位置。
  *
- * 优先沿用原来的"贴着锚点、放不下就翻到左侧"策略；只有当这个首选位置会压到
- * 右侧互动栏禁入区时才尝试其它候选（左移、上移、下移、翻到锚点左侧），并在
- * 候选里挑冲突最小的一个。**不会**为了避开禁入区去缩小字号或移动地图。
+ * 落位规则（callout 的通用做法）：
+ *
+ * 1. **反方向**：锚点在画面左下 → 面板去右上；锚点在右上 → 面板去左下。
+ *    面板总是走向更空的那一侧，而不是压在府上。
+ * 2. **先躲主角**：面板与当前府包围盒重叠的代价仅次于越界，所以哪怕反方向
+ *    也放不下（贴边），也会先退而求其次换到上下/左右，而不是盖住府。
+ * 3. **再躲 UI**：右侧互动栏禁入区、安全区边界照旧。
+ * 4. **引线**：从锚点连到面板**边缘最近点**，长度只有几十像素，明确指向哪个府。
+ *
+ * 面板尺寸不变，也不会为了避让去缩小字号或移动地图。
  */
 export const placeLabel = ({
   cx,
@@ -102,6 +129,9 @@ export const placeLabel = ({
   panelBounds,
   keepOut = null,
   box = LABEL_BOX,
+  focus = null,
+  avoid = null,
+  obstacles = null,
 }: PlaceLabelInput): LabelPlacement => {
   const width = box.width;
   const height = box.height;
@@ -117,65 +147,115 @@ export const placeLabel = ({
   const clampX = (value: number): number => clamp(value, panelMinX, panelMaxX);
   const clampY = (value: number): number => clamp(value, panelMinY, panelMaxY);
 
-  // 首选：原来的行为。锚点右侧放不下就翻到左侧。
-  const flip = anchorX + LABEL_OFFSET_X + width > panelMaxX;
-  const preferredX = clampX(
-    flip ? anchorX - LABEL_OFFSET_X - width : anchorX + LABEL_OFFSET_X,
-  );
-  const preferredY = clampY(anchorY - LABEL_OFFSET_Y);
+  // 反方向：锚点在中心左侧 → 面板向右；锚点在中心上方 → 面板向下。
+  const focusX = focus?.x ?? (panelBounds.x0 + panelBounds.x1) / 2;
+  const focusY = focus?.y ?? (panelBounds.y0 + panelBounds.y1) / 2;
+  const awayX = anchorX < focusX ? 1 : -1;
+  const awayY = anchorY < focusY ? 1 : -1;
 
-  const candidates: Array<{x: number; y: number; flipped: boolean; kind: string}> = [
-    {x: preferredX, y: preferredY, flipped: flip, kind: "preferred"},
+  /**
+   * 面板与"主角"之间的空隙。
+   *
+   * 位置以府的真实包围盒为基准而不是锚点中心：贴着府的外沿让开 14px，面板就
+   * 不会压住府，引线也就只有十几像素——这正是 callout 想要的效果。没有传入
+   * 包围盒时退回"锚点 + 固定偏移"的老几何。
+   */
+  const own = avoid && avoid.length ? avoid[0] : null;
+  const GAP_X = 58;
+  const GAP_Y = 44;
+  const CLEARANCE = 14;
+  const positionFor = (hx: number, vy: number): {x: number; y: number} => ({
+    x: clampX(
+      hx > 0
+        ? (own ? own.x1 + CLEARANCE : anchorX + GAP_X)
+        : hx < 0
+          ? (own ? own.x0 - CLEARANCE - width : anchorX - GAP_X - width)
+          : anchorX - width / 2,
+    ),
+    y: clampY(
+      vy > 0
+        ? (own ? own.y1 + CLEARANCE : anchorY + GAP_Y)
+        : vy < 0
+          ? (own ? own.y0 - CLEARANCE - height : anchorY - GAP_Y - height)
+          : anchorY - height / 2,
+    ),
+  });
+
+  // 对角优先，其次是只在一根轴上让开；最后才是"靠近侧"（几乎肯定压住府，
+  // 只在周围全是陆地/UI 时兜底）。
+  const sides = [
+    {hx: awayX, vy: awayY, kind: "diagonal-away"},
+    {hx: awayX, vy: 0, kind: "side-away"},
+    {hx: 0, vy: awayY, kind: "stack-away"},
+    {hx: -awayX, vy: -awayY, kind: "diagonal-near"},
+    {hx: -awayX, vy: 0, kind: "side-near"},
+    {hx: 0, vy: -awayY, kind: "stack-near"},
   ];
 
-  if (keepOut && overlapArea({x0: preferredX, y0: preferredY, x1: preferredX + width, y1: preferredY + height}, keepOut) > 0) {
-    // 1) 整体左移到禁入区左侧。
+  const candidates: Array<{x: number; y: number; hx: number; vy: number; kind: string}> = [];
+  for (const side of sides) {
+    const {x, y} = positionFor(side.hx, side.vy);
+    candidates.push({x, y, ...side});
+    if (!keepOut) continue;
+    const panel: LabelRect = {x0: x, y0: y, x1: x + width, y1: y + height};
+    if (overlapArea(panel, keepOut) <= 0) continue;
+    // 压到互动栏时，同方向再试三个"贴着禁入区边"的位置。
     candidates.push({
-      x: clampX(Math.min(preferredX, keepOut.x0 - width - EDGE_MARGIN)),
-      y: preferredY,
-      flipped: true,
-      kind: "push-left",
+      x: clampX(Math.min(x, keepOut.x0 - width - EDGE_MARGIN)),
+      y,
+      hx: side.hx,
+      vy: side.vy,
+      kind: `${side.kind}-push-left`,
     });
-    // 2) 抬到禁入区上方。
     candidates.push({
-      x: preferredX,
+      x,
       y: clampY(keepOut.y0 - height - EDGE_MARGIN),
-      flipped: flip,
-      kind: "push-up",
+      hx: side.hx,
+      vy: side.vy,
+      kind: `${side.kind}-push-up`,
     });
-    // 3) 压到禁入区下方（底部安全区通常不允许，clamp 会把候选拉回安全区内，
-    //    所以这一步更多是给"禁入区贴在顶部"的平台用）。
     candidates.push({
-      x: preferredX,
+      x,
       y: clampY(keepOut.y1 + EDGE_MARGIN),
-      flipped: flip,
-      kind: "push-down",
-    });
-    // 4) 翻到锚点左侧，同时避开禁入区。
-    candidates.push({
-      x: clampX(anchorX - LABEL_OFFSET_X - width),
-      y: preferredY,
-      flipped: true,
-      kind: "flip-left",
+      hx: side.hx,
+      vy: side.vy,
+      kind: `${side.kind}-push-down`,
     });
   }
 
+  const avoidRects = avoid ?? [];
+  const obstacleRects = obstacles ?? [];
+
+  const scoreOf = (panel: LabelRect): CandidateScore => ({
+    overflowPx: Math.max(
+      panelBounds.x0 - panel.x0,
+      panel.x1 - panelBounds.x1,
+      panelBounds.y0 - panel.y0,
+      panel.y1 - panelBounds.y1,
+      0,
+    ),
+    avoidArea: totalOverlap(panel, avoidRects),
+    keepOutArea: keepOut ? overlapArea(panel, keepOut) : 0,
+    otherArea: totalOverlap(panel, obstacleRects),
+  });
+
   let best = candidates[0];
-  let bestScore = Number.POSITIVE_INFINITY;
-  let bestDetail = {keepOutArea: 0, overflowPx: 0};
-  for (const candidate of candidates) {
-    const panelRect: LabelRect = {
+  let bestScore = scoreOf({
+    x0: best.x,
+    y0: best.y,
+    x1: best.x + width,
+    y1: best.y + height,
+  });
+  for (const candidate of candidates.slice(1)) {
+    const score = scoreOf({
       x0: candidate.x,
       y0: candidate.y,
       x1: candidate.x + width,
       y1: candidate.y + height,
-    };
-    const score = evaluate(panelRect, panelBounds, keepOut);
-    // 严格小于：候选顺序即优先级，平局时保留更靠前的策略。
-    if (score.penalty + 1e-6 < bestScore) {
-      bestScore = score.penalty;
+    });
+    if (better(score, bestScore)) {
+      bestScore = score;
       best = candidate;
-      bestDetail = score;
     }
   }
 
@@ -188,10 +268,32 @@ export const placeLabel = ({
     y1: panelY + height,
   };
   const towardsRight = panelX >= anchorX;
-  const lineY = clamp(anchorY - 55, panelY, panelY + height);
+
+  // 引线连到面板边缘的最近点：横向在外侧就连竖边，纵向在外侧就连横边。
+  let lineX2: number;
+  let lineY2: number;
+  if (anchorX < panelRect.x0) {
+    lineX2 = panelRect.x0;
+    lineY2 = clamp(anchorY, panelY + 16, panelY + height - 16);
+  } else if (anchorX > panelRect.x1) {
+    lineX2 = panelRect.x1;
+    lineY2 = clamp(anchorY, panelY + 16, panelY + height - 16);
+  } else if (anchorY < panelY) {
+    lineX2 = clamp(anchorX, panelX + 16, panelX + width - 16);
+    lineY2 = panelY;
+  } else {
+    lineX2 = clamp(anchorX, panelX + 16, panelX + width - 16);
+    lineY2 = panelRect.y1;
+  }
+  // 起点从锚点往外让 6px，避免和锚点圆点糊在一起。
+  const dx = lineX2 - anchorX;
+  const dy = lineY2 - anchorY;
+  const length = Math.hypot(dx, dy) || 1;
+  const lineX1 = anchorX + (dx / length) * 6;
+  const lineY1 = anchorY + (dy / length) * 6;
 
   let conflict: LabelConflict | null = null;
-  if (bestDetail.keepOutArea > 0) {
+  if (bestScore.keepOutArea > 0) {
     const keepOutRect = keepOut as LabelRect;
     const overlapWidth = Math.round(
       Math.min(panelRect.x1, keepOutRect.x1) - Math.max(panelRect.x0, keepOutRect.x0),
@@ -201,7 +303,7 @@ export const placeLabel = ({
     );
     conflict = {
       code: "KEEP_OUT_OVERLAP",
-      penaltyPx: Math.round(bestDetail.keepOutArea),
+      penaltyPx: Math.round(bestScore.keepOutArea),
       detail:
         `标签面板仍与右侧互动栏禁入区重叠 ${Math.max(0, overlapWidth)}x${Math.max(
           0,
@@ -212,10 +314,10 @@ export const placeLabel = ({
         `y ${Math.round(keepOutRect.y0)}~${Math.round(keepOutRect.y1)}），` +
         `安全区已用尽（安全区宽 ${Math.round(rectWidth(panelBounds))}px，标签宽 ${width}px）`,
     };
-  } else if (bestDetail.overflowPx > 0) {
+  } else if (bestScore.overflowPx > 0) {
     conflict = {
       code: "BOUNDS_OVERFLOW",
-      penaltyPx: Math.round(bestDetail.overflowPx),
+      penaltyPx: Math.round(bestScore.overflowPx),
       detail:
         `标签面板越出标签安全区（面板 x ${Math.round(panelRect.x0)}~${Math.round(
           panelRect.x1,
@@ -228,14 +330,10 @@ export const placeLabel = ({
   return {
     anchor: [anchorX, anchorY],
     panel: [panelX, panelY],
-    line: [
-      anchorX + 10 * (towardsRight ? 1 : -1),
-      anchorY - 5,
-      towardsRight ? panelX : panelX + width,
-      lineY,
-    ],
+    line: [lineX1, lineY1, lineX2, lineY2],
     panelRect,
-    flipped: best.flipped,
+    flipped: !towardsRight,
+    side: {hx: best.hx, vy: best.vy},
     conflict,
   };
 };

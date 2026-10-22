@@ -9,10 +9,13 @@ import test from 'node:test';
 
 import {
   buildTimeline,
+  CAMERA_START_DELAY_SECONDS,
   findRevealedSegmentIndex,
 } from '../../src/timeline/buildTimeline.ts';
 
 const FPS = 30;
+// 起步帧跟随源码常量：改 `CAMERA_START_DELAY_SECONDS` 不用改这里。
+const DELAY_FRAMES = Math.round(CAMERA_START_DELAY_SECONDS * FPS);
 
 /**
  * 和 web-server 写进 props 的形状一致：开场白 + 3、2、1 名，每个名次两段。
@@ -187,7 +190,7 @@ test('没有音频元数据时退回名义时长，同样按名次/府名两段�
   assert.equal(name.duration, 72);
 });
 
-test('开场运镜：视频开始 0.5s 后起步，第一个名次念完就落位', () => {
+test('开场运镜：延迟起步（跟随常量），第一个名次念完就落位', () => {
   const timeline = buildTimeline(project());
   const opening = timeline.segments[0];
   const firstRank = timeline.segments[1];
@@ -195,8 +198,8 @@ test('开场运镜：视频开始 0.5s 后起步，第一个名次念完就落�
 
   assert.equal(opening.part, 'opening');
   assert.equal(firstRank.part, 'rank');
-  // 0.5s = 15 帧起步；第一条名次的「อันดับ 3」说完（第 75 帧）落位。
-  assert.deepEqual(timeline.camera, {start: 15, end: 75});
+  // 延迟帧起步；第一条名次的「อันดับ 3」说完（第 75 帧）落位。
+  assert.deepEqual(timeline.camera, {start: DELAY_FRAMES, end: 75});
   assert.equal(timeline.camera.end, firstRank.revealAt);
   // 名次段后面的静音不算进窗口，落位早于府名开口 —— 第一个府点亮时镜头已经停住。
   assert.ok(timeline.camera.end <= firstName.revealAt);
@@ -213,7 +216,7 @@ test('没有开场白时运镜照样成立：延迟起步、第一个名次说�
     }),
   );
   // 名次段只有 0.5s（15 帧），比延迟还短：起点被前移，保住最短行程（6 帧）。
-  assert.deepEqual(timeline.camera, {start: 9, end: 15});
+  assert.deepEqual(timeline.camera, {start: 15 - 6, end: 15});
 });
 
 test('无音频兜底路径：同样的两个节拍，Studio 预览也能看到推进', () => {
@@ -221,8 +224,8 @@ test('无音频兜底路径：同样的两个节拍，Studio 预览也能看到�
     project({audioSegments: undefined, introDuration: 1.5, finalHoldDuration: 0}),
   );
   assert.equal(timeline.introFrames, 45);
-  // 片头静音 45 帧后开始第一个名次（3.2s × 20% ≈ 19 帧）：15 帧起步、64 帧落位。
-  assert.deepEqual(timeline.camera, {start: 15, end: 64});
+  // 片头静音 45 帧后开始第一个名次（3.2s × 20% ≈ 19 帧）：延迟帧起步、64 帧落位。
+  assert.deepEqual(timeline.camera, {start: Math.min(DELAY_FRAMES, 64 - 6), end: 64});
   assert.equal(timeline.camera.end, timeline.segments[0].revealAt);
 });
 

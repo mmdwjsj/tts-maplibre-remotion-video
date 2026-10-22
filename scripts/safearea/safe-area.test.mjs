@@ -221,6 +221,49 @@ test('场景：排名标签落在底部安全区边缘时，面板不会压进�
 });
 
 /* -------------------------------------------------------------------------- *
+ * 场景：callout 反方向落位 + 不盖住府
+ * -------------------------------------------------------------------------- */
+
+const placeFor = (resolution, cx, cy, province) =>
+  placeLabel({
+    ...labelInput(resolution, cx, cy),
+    focus: {x: resolution.canvas.width / 2, y: resolution.canvas.height / 2},
+    avoid: [province],
+  });
+
+test('场景：府在画面左下时，标签去右上且不压住府', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  // 左下角的一个府（锚点在包围盒中心）。
+  const province = {x0: 100, y0: 1320, x1: 320, y1: 1480};
+  const placement = placeFor(resolution, 210, 1400, province);
+
+  assert.equal(placement.conflict, null, placement.conflict?.detail);
+  assert.ok(labelFitsBounds(placement, resolution.labelRect));
+  // 反方向：右、上（vy=-1，或因安全区钳制退化到水平侧移）。
+  assert.equal(placement.side.hx, 1);
+  assert.ok(placement.side.vy <= 0);
+  assert.ok(
+    !overlaps(placement.panelRect, province),
+    `面板 ${JSON.stringify(placement.panelRect)} 压住了府 ${JSON.stringify(province)}`,
+  );
+});
+
+test('场景：府在画面右上时，标签去左下且不压住府', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  const province = {x0: 800, y0: 300, x1: 980, y1: 460};
+  const placement = placeFor(resolution, 890, 380, province);
+
+  assert.equal(placement.conflict, null, placement.conflict?.detail);
+  assert.ok(labelFitsBounds(placement, resolution.labelRect));
+  assert.equal(placement.side.hx, -1);
+  assert.ok(placement.side.vy >= 0);
+  assert.ok(
+    !overlaps(placement.panelRect, province),
+    `面板 ${JSON.stringify(placement.panelRect)} 压住了府 ${JSON.stringify(province)}`,
+  );
+});
+
+/* -------------------------------------------------------------------------- *
  * 场景 10：标签重叠
  * -------------------------------------------------------------------------- */
 
