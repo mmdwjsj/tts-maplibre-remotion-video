@@ -68,7 +68,9 @@ export const ThailandMap: React.FC<Props> = ({geojson, project, visibleIds, acti
     ? placeLabel({
         cx: activeFeature.center[0],
         cy: activeFeature.center[1],
-        rect: framing.mapRect ?? framing.rect,
+        // The anchor sits on the province itself, and every ranked province is
+        // fully inside `rect`, so the anchor never needs the wider bleed rect.
+        rect: framing.rect,
         panelBounds: framing.labelRect,
         keepOut: framing.keepOutRect ?? null,
         focus: {x: framing.stage.width / 2, y: framing.stage.height / 2},

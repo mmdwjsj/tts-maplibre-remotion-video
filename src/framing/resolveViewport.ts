@@ -85,6 +85,15 @@ export const labelRectFor = (stage: FramingStage): FramingRect => ({
  *               the status bar, the right-hand action rail and the caption.
  */
 export type FramingSafeArea = {
+  /**
+   * The rect the ranked provinces must be **fully** fitted into. This is the
+   * platform's core content area (`coreRect`), not the bleed rect: a province
+   * whose shape leaks under the status bar or the caption is not "visible".
+   *
+   * When omitted, `mapRect` is used (the old behaviour, which let the base map
+   * bleed into the reserved bands).
+   */
+  fitRect?: FramingRect;
   mapRect?: FramingRect;
   labelRect?: FramingRect;
   /**
@@ -100,6 +109,8 @@ export type FramingSafeArea = {
 const MIN_RECT_SIZE = 80;
 const WEB_MERCATOR_TILE_SIZE = 256;
 const DEFAULT_CENTER: [number, number] = [100.5, 15];
+/** How much of the country's lon span must be visible before re-centring it. */
+const COUNTRY_CENTER_TOLERANCE = 0.95;
 
 /* -------------------------------------------------------------------------- *
  * Options
@@ -122,6 +133,22 @@ export type FramingOptions = {
   allowOutlierDrop?: boolean;
   /** Extra inset ratio applied to the fit rect, 0 - 0.3. */
   padding?: number;
+  /**
+   * Vertical squash, 0 - 0.25. `0` keeps true proportions.
+   *
+   * Thailand is very tall and narrow, so fitting it into a 9:16 safe area
+   * without distortion leaves a map that is only ~650px wide inside an 804px
+   * box — a third of the frame turns into empty water. Squeezing the map
+   * *vertically only* by 12% widens it by ~11% at the same height, and by 19%
+   * the map fills the safe area's width exactly.
+   *
+   * This is safe here because the picture encodes rank with colour, not area or
+   * distance: nothing on screen is measured against the map's proportions, and
+   * there is no graticule, scale bar or true-circle decoration that would give
+   * the distortion away. Text, label panels and leader-line weights are **never**
+   * squashed — only the projected geography.
+   */
+  verticalSquash?: number;
   /**
    * Context floor: the smallest share of the country's longitude span the frame
    * is allowed to show, as a fraction (`0` disables it, preset default when
@@ -147,6 +174,8 @@ export type ResolvedFramingOptions = {
   framingPreset: FramingPreset;
   coverageThreshold: number;
   padding: number;
+  /** Resolved vertical squash (0 = true proportions). */
+  verticalSquash: number;
   /** Resolved context floor (fraction of the country lon span, 0 = off). */
   contextFloor: number;
   minZoom: number;
@@ -168,6 +197,7 @@ export const DEFAULT_FRAMING_OPTIONS: ResolvedFramingOptions = {
   coverageThreshold: 1,
   allowOutlierDrop: false,
   padding: -1,
+  verticalSquash: 0.12,
   contextFloor: -1,
   minZoom: 5,
   maxZoom: 12,
@@ -279,18 +309,19 @@ const rescaleKeepingPivot = (
 };
 
 /**
- * Slides the map horizontally so the country's midpoint sits on the **canvas**
- * midpoint, i.e. the empty water left and right of the landmass is split evenly.
+ * Slides the map horizontally so the country's midpoint sits on the **centre of
+ * the fit rect**, i.e. the empty water left and right of the landmass is split
+ * evenly inside the area the platform leaves free.
  *
- * It only applies when the frame is at least as wide as the country — i.e. the
- * camera has been stepped back to (or past) the whole-country view. That happens
- * whenever the ranked provinces form a long north-south chain: `contain` fitting
- * centres the *ranked* bbox, so the narrow strip ends up in the middle of the
- * frame while the whole landmass sits off to one side and the other side turns
- * into a wide empty sea. Because the country already fits inside the frame,
- * re-centring on it cannot push a ranked province out of frame (every ranked
- * province is inside the country), it only splits the empty margin across both
- * sides instead of leaving it all on one.
+ * The target is the *rect* centre, not the canvas centre: once a safe area is in
+ * play those two differ (the right-hand action rail pushes the core area left of
+ * the canvas midline), and aligning to the canvas would offset the whole country
+ * by that difference — enough to push an eastern province out of the frame.
+ *
+ * `boundsInFrame` is the union of the ranked provinces' projected boxes in the
+ * current projection. When supplied, the shift is clamped so the move can never
+ * push a ranked province out of `rect` — the country re-centres as far as it is
+ * allowed to, and no further.
  *
  * `x = translate[0] + scale * λ` in d3-geo's Mercator, so moving the geography
  * by Δλ pixels is `scale * Δλ`. To bring λ_center onto `cx` the translate must
@@ -304,21 +335,139 @@ const alignCountryLonCenter = (
   rect: FramingRect,
   lonCenter: number,
   lonSpan: number,
+  boundsInFrame?: FramingRect,
 ): GeoProjection => {
   if (!(lonSpan > 0) || !projection.invert) return projection;
+  // Only meaningful when the frame holds (nearly) the whole country: then the
+  // empty water is a composition choice. When the frame shows a fraction of the
+  // country — one province, or a cluster on one side — sliding to the country's
+  // midpoint would just push the subject off centre.
+  //
+  // The 95% tolerance is what keeps this working under a vertical squash: the
+  // squeeze widens the landmass by ~14%, so a north-south chain that used to
+  // span slightly less than the country can end up spanning slightly more.
   const visible = visibleLonSpanOf(projection, stage, rect);
-  if (!(visible >= lonSpan - 1e-6)) return projection;
-  const cx = stage.width / 2;
+  if (!(visible >= lonSpan * COUNTRY_CENTER_TOLERANCE)) return projection;
+  const cx = rectCenter(rect)[0];
   const cy = rectCenter(rect)[1];
   const current = projection.invert([cx, cy]);
   if (!current || !Number.isFinite(current[0])) return projection;
   const scale = projection.scale();
-  const shift = (scale * (current[0] - lonCenter) * Math.PI) / 180;
-  if (!Number.isFinite(shift) || Math.abs(shift) < 0.5) return projection;
+  let shift = (scale * (current[0] - lonCenter) * Math.PI) / 180;
+  if (!Number.isFinite(shift)) return projection;
+
+  if (boundsInFrame) {
+    // Only slide when the ranked set leaves horizontal slack. If it already
+    // spans the rect width, the horizontal position is *pinned* by the data and
+    // re-centring on the country would just shove a province towards an edge
+    // (a single-province framing is the extreme case).
+    const rectWidth = rect.x1 - rect.x0;
+    const usedWidth = boundsInFrame.x1 - boundsInFrame.x0;
+    if (rectWidth - usedWidth < rectWidth * 0.02) return projection;
+
+    // How far the geography may slide before a ranked province leaves the rect.
+    const line = 1;
+    const minShift = rect.x0 - boundsInFrame.x0 - line;
+    const maxShift = rect.x1 - boundsInFrame.x1 + line;
+    // No room to move at all (the ranked set already fills the width): leave it.
+    if (minShift > maxShift) return projection;
+    shift = clamp(shift, minShift, maxShift);
+  }
+
+  if (Math.abs(shift) < 0.5) return projection;
   const [tx, ty] = projection.translate();
   return geoMercator()
     .scale(scale)
     .translate([tx + shift, ty]);
+};
+
+/* -------------------------------------------------------------------------- *
+ * Vertical squash
+ * -------------------------------------------------------------------------- */
+
+/** The minimum surface `geoPath` needs from a projection stream. */
+type GeoStreamSink = {
+  point: (x: number, y: number, z?: number) => void;
+  lineStart: () => void;
+  lineEnd: () => void;
+  polygonStart: () => void;
+  polygonEnd: () => void;
+  sphere?: () => void;
+};
+
+/**
+ * Wraps a projection so its output is squeezed vertically by `k`, around the
+ * horizontal line `pivotY`.
+ *
+ * The whole point of doing it *inside the projection* (rather than with an SVG
+ * `scale(1, k)` on the map group) is that every consumer keeps working
+ * unchanged: `geoPath` draws the squeezed outline, `path.centroid` /
+ * `path.bounds` return squeezed coordinates — so labels, leader lines and the
+ * coverage diagnostics all line up with what is actually painted. An SVG
+ * transform would have squeezed the labels too, which is the one thing that
+ * must never happen (squashed text looks broken).
+ *
+ * `invert` is remapped by the exact inverse, so lon/lat lookups stay correct.
+ */
+const squashProjection = (
+  base: GeoProjection,
+  k: number,
+  pivotY: number,
+): GeoProjection => {
+  if (!(k > 0) || Math.abs(k - 1) < 1e-9) return base;
+  const squashY = (y: number): number => pivotY + (y - pivotY) * k;
+  const projection = ((lonlat: [number, number]) => {
+    const point = base(lonlat);
+    return point ? [point[0], squashY(point[1])] : point;
+  }) as unknown as GeoProjection;
+  projection.invert = (point: [number, number]) =>
+    base.invert
+      ? base.invert([point[0], pivotY + (point[1] - pivotY) / k])
+      : null;
+  projection.stream = (sink: GeoStreamSink) =>
+    base.stream({
+      point: (x: number, y: number, z?: number) => sink.point(x, squashY(y), z ?? 0),
+      lineStart: () => sink.lineStart(),
+      lineEnd: () => sink.lineEnd(),
+      polygonStart: () => sink.polygonStart(),
+      polygonEnd: () => sink.polygonEnd(),
+      sphere: () => sink.sphere?.(),
+    } as unknown as GeoStreamSink);
+  projection.scale = base.scale;
+  projection.translate = base.translate;
+  projection.center = base.center;
+  projection.precision = base.precision;
+  return projection;
+};
+
+/**
+ * Stretches a rect vertically by `1 / (1 - squash)` around its own centre.
+ *
+ * Fitting is done in this *unstretched* space and the projection squeezes the
+ * result back down, so the fitted geography lands inside the original rect.
+ * Concretely: fitting into `virtualRect` and then squashing by `k` is identical
+ * to fitting into `rect` with independent x/y scale factors, but it keeps the
+ * single-scale `fitExtent` path (and its outlier logic) untouched.
+ */
+const stretchVertically = (rect: FramingRect, squash: number): FramingRect => {
+  if (!(squash > 0) || squash >= 1) return rect;
+  const centerY = (rect.y0 + rect.y1) / 2;
+  const halfHeight = (rect.y1 - rect.y0) / 2 / (1 - squash);
+  return {x0: rect.x0, y0: centerY - halfHeight, x1: rect.x1, y1: centerY + halfHeight};
+};
+
+/** Applies the same squash to a measured metric, for human-facing diagnostics. */
+const squashMetric = (metric: FrameMetric, k: number, pivotY: number): FrameMetric => {
+  if (!(k > 0) || Math.abs(k - 1) < 1e-9) return metric;
+  const squashY = (y: number): number => pivotY + (y - pivotY) * k;
+  return {
+    bbox: [
+      [metric.bbox[0][0], squashY(metric.bbox[0][1])],
+      [metric.bbox[1][0], squashY(metric.bbox[1][1])],
+    ],
+    areaPx: metric.areaPx * k,
+    centroid: [metric.centroid[0], squashY(metric.centroid[1])],
+  };
 };
 
 /* -------------------------------------------------------------------------- *
@@ -356,6 +505,8 @@ export type FramingViewport = {
   /** False (default) means no ranked province was allowed to leave the frame. */
   allowOutlierDrop: boolean;
   padding: number;
+  /** Vertical squash actually applied (0 = true proportions). */
+  squash: number;
   stage: FramingStage;
   /** The area the ranked regions are fitted into (full canvas minus edge safety). */
   rect: FramingRect;
@@ -484,6 +635,16 @@ export const normalizeFramingOptions = (
       options.padding = input.padding;
     } else {
       warnings.push(`padding 必须是 [0, 0.3] 之间的数值，已回退为 ${presetPadding}`);
+    }
+  }
+
+  if (input.verticalSquash !== undefined) {
+    if (isFiniteNumber(input.verticalSquash) && input.verticalSquash >= 0 && input.verticalSquash <= 0.25) {
+      options.verticalSquash = input.verticalSquash;
+    } else {
+      warnings.push(
+        `verticalSquash 必须是 [0, 0.25] 之间的数值（收到 ${String(input.verticalSquash)}），已回退为 ${options.verticalSquash}`,
+      );
     }
   }
 
@@ -873,6 +1034,7 @@ const cacheKey = (
     options.coverageThreshold,
     options.allowOutlierDrop ? 1 : 0,
     options.padding,
+    options.verticalSquash,
     options.contextFloor,
     options.minZoom,
     options.maxZoom,
@@ -881,6 +1043,7 @@ const cacheKey = (
     options.manualCenter ? options.manualCenter.join(',') : '-',
     options.manualZoom ?? '-',
     `${stage.width}x${stage.height}`,
+    rectKey(safe?.fitRect),
     rectKey(safe?.mapRect),
     rectKey(safe?.labelRect),
     ids.join(','),
@@ -915,10 +1078,24 @@ export const resolveViewport = (
   const cached = cacheable ? bucket?.get(key) : undefined;
   if (cached) return cached;
 
-  // The base map is fitted into the platform's free area when a safe area is
-  // supplied; otherwise the built-in title/footer bands apply (unchanged).
-  const authoredRect = authorRect(safeStage, safe?.mapRect);
+  // The ranked provinces are fitted into the platform's **core content area**
+  // when one is supplied: a province whose shape runs under the status bar or
+  // the caption is not actually readable. Falling back to `mapRect` keeps the
+  // old bleed behaviour for callers that do not pass a safe area.
+  const authoredRect = authorRect(safeStage, safe?.fitRect ?? safe?.mapRect);
   const rect = insetRect(authoredRect, options.padding, warnings);
+  // Everything below fits against `fitRect`, which is `rect` stretched
+  // vertically by 1/(1-squash); `createProjection` squeezes it back down, so the
+  // geography lands inside `rect` while being 1/(1-squash) times wider. Fitting
+  // and measuring in this space keeps a single x/y scale factor, so the outlier
+  // and context-floor logic needs no special case.
+  const squash = clamp(options.verticalSquash, 0, 0.25);
+  const squashK = 1 - squash;
+  const fitRect = stretchVertically(rect, squash);
+  // The whole-country view uses the *unpadded* area, so "the whole country with
+  // a margin" stays strictly smaller than "the whole country" — that is what the
+  // never-smaller-than-full-country fallback compares against.
+  const fullRect = stretchVertically(authoredRect, squash);
   const safeLabelRect = safe?.labelRect
     ? {
         x0: clamp(safe.labelRect.x0, 0, safeStage.width),
@@ -987,10 +1164,14 @@ export const resolveViewport = (
 
   let projection: GeoProjection;
   let contextFloorApplied = false;
+  // The provinces that are *supposed* to be on screen. With outlier dropping
+  // enabled this is smaller than `candidates` — the containment pass below must
+  // never chase a province that was deliberately traded away for zoom.
+  let keepSet: Candidate[] = candidates;
   if (mode === 'full-country') {
     // The authored rect: always shows the whole country, now across the whole
     // canvas instead of the smaller box the map used to be confined to.
-    projection = fitWholeCountry(authoredRect);
+    projection = fitWholeCountry(fullRect);
   } else if (mode === 'manual') {
     const center = options.manualCenter ?? DEFAULT_CENTER;
     const zoom = clamp(
@@ -1007,9 +1188,10 @@ export const resolveViewport = (
       .scale(scale)
       .translate([rectCenter(rect)[0] - projected[0], rectCenter(rect)[1] - projected[1]]);
   } else {
-    const framed = selectFramed(candidates, rect, options);
+    const framed = selectFramed(candidates, fitRect, options);
+    keepSet = framed;
     projection = geoMercator().fitExtent(
-      corners(rect),
+      corners(fitRect),
       toCollection(framed) as unknown as GeoPermissibleObjects,
     );
 
@@ -1023,7 +1205,7 @@ export const resolveViewport = (
     // and only when the frame would otherwise be narrower than the floor.
     if (options.contextFloor > 0 && index.lonSpan > 0) {
       const floorSpan = index.lonSpan * options.contextFloor;
-      const visibleSpan = visibleLonSpanOf(projection, safeStage, rect);
+      const visibleSpan = visibleLonSpanOf(projection, safeStage, fitRect);
       if (visibleSpan > 0 && visibleSpan < floorSpan - 1e-6) {
         projection = rescaleKeepingPivot(
           projection,
@@ -1058,22 +1240,82 @@ export const resolveViewport = (
     // the full-country view uses the whole free area. Showing the country with a
     // margin around it is strictly worse than showing the country: fall back to
     // the full-country fit, which still contains every ranked province.
-    const wholeCountryScale = fitWholeCountry(authoredRect).scale();
+    const wholeCountryScale = fitWholeCountry(fullRect).scale();
     if (projection.scale() < wholeCountryScale - 1e-6 && framed.length >= candidates.length) {
-      projection = fitWholeCountry(authoredRect);
+      projection = fitWholeCountry(fullRect);
     }
 
     // Every ranked province is inside the frame: with the frame wider than the
-    // country, re-centre horizontally on the country instead of on the narrow
-    // ranked strip, so the empty margin is split instead of piling up on one side.
+    // ranked strip, re-centre horizontally on the country so the empty margin is
+    // split instead of piling up on one side. The shift is clamped to the room
+    // the ranked set leaves, so this can never trade centring for coverage.
     if (framed.length >= candidates.length) {
+      const unionPath = geoPath(projection);
+      const boundsInFrame = candidates.reduce<FramingRect | null>((acc, candidate) => {
+        const metric = measure(unionPath, candidate.feature);
+        if (!metric) return acc;
+        const box: FramingRect = {
+          x0: metric.bbox[0][0],
+          y0: metric.bbox[0][1],
+          x1: metric.bbox[1][0],
+          y1: metric.bbox[1][1],
+        };
+        return acc
+          ? {
+              x0: Math.min(acc.x0, box.x0),
+              y0: Math.min(acc.y0, box.y0),
+              x1: Math.max(acc.x1, box.x1),
+              y1: Math.max(acc.y1, box.y1),
+            }
+          : box;
+      }, null);
       projection = alignCountryLonCenter(
         projection,
         safeStage,
-        rect,
+        fitRect,
         index.lonCenter,
         index.lonSpan,
+        boundsInFrame ?? undefined,
       );
+    }
+  }
+
+  /* 2b. Hard guarantee: every ranked province is *fully* inside the fit rect.
+   *
+   * `selectFramed` already fits the kept set, but two later steps can shrink the
+   * usable area without re-fitting: the zoom clamp (which only ever scales the
+   * same centre) and `alignCountryLonCenter`. Anything that still pokes out is
+   * pulled back by stepping the camera back a notch at a time — a few percent of
+   * scale, at most a handful of iterations, so the composition barely moves.
+   */
+  const CONTAIN_EPSILON = 1;
+  const fullyInside = (metric: FrameMetric, target: FramingRect): boolean =>
+    metric.bbox[0][0] >= target.x0 - CONTAIN_EPSILON &&
+    metric.bbox[0][1] >= target.y0 - CONTAIN_EPSILON &&
+    metric.bbox[1][0] <= target.x1 + CONTAIN_EPSILON &&
+    metric.bbox[1][1] <= target.y1 + CONTAIN_EPSILON;
+
+  if (keepSet.length && mode !== 'manual') {
+    // `minZoom` is an explicit user setting and wins over coverage: stepping
+    // back past it would silently ignore what was asked for. In that case the
+    // shortfall is reported instead of hidden.
+    const scaleFloor = zoomToScale(options.minZoom);
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const probePath = geoPath(projection);
+      const overflow = keepSet.some((candidate) => {
+        const metric = measure(probePath, candidate.feature);
+        return metric ? !fullyInside(metric, fitRect) : false;
+      });
+      if (!overflow) break;
+      const nextScale = Math.max(projection.scale() * 0.97, scaleFloor);
+      if (nextScale >= projection.scale() - 1e-9) {
+        warnings.push(
+          `受 minZoom=${options.minZoom} 限制，无法再后退容纳全部排名区域；` +
+            '如需全部可见，请调低 minZoom 或改用 manual 手动取景',
+        );
+        break;
+      }
+      projection = rescaleKeepingPivot(projection, nextScale, rectCenter(fitRect));
     }
   }
 
@@ -1085,11 +1327,11 @@ export const resolveViewport = (
   candidates.forEach((candidate) => {
     const metric = measure(path, candidate.feature) ?? candidate.metric;
     framed.set(candidate.provinceId, metric);
-    const inside =
-      metric.bbox[1][0] > rect.x0 &&
-      metric.bbox[0][0] < rect.x1 &&
-      metric.bbox[1][1] > rect.y0 &&
-      metric.bbox[0][1] < rect.y1;
+    // Full containment, not mere intersection: a province whose outline is
+    // half under the status bar is not "visible" even though it overlaps the
+    // frame. The epsilon absorbs the sub-pixel error of fitting a boundary
+    // exactly onto the rect edge.
+    const inside = fullyInside(metric, fitRect);
     (inside ? covered : dropped).push(candidate);
   });
 
@@ -1108,10 +1350,18 @@ export const resolveViewport = (
   }
 
   /* 4. diagnostics for the UI / generation log */
+  // Reported in *on-screen* coordinates: metrics are measured in the stretched
+  // fit space, so they are squeezed back here before being handed out. Anything
+  // that reads these numbers (preview, logs) then agrees with the pixels.
+  const squashPivotY = (rect.y0 + rect.y1) / 2;
   const coveredIds = new Set(covered.map((candidate) => candidate.provinceId));
-  const median = medianCenter(candidates.map((candidate) => framed.get(candidate.provinceId)!.centroid));
+  const median = medianCenter(
+    candidates.map((candidate) =>
+      squashMetric(framed.get(candidate.provinceId)!, squashK, squashPivotY).centroid,
+    ),
+  );
   const diagnostics: FramingDiagnostic[] = candidates.map((candidate) => {
-    const metric = framed.get(candidate.provinceId)!;
+    const metric = squashMetric(framed.get(candidate.provinceId)!, squashK, squashPivotY);
     return {
       provinceId: candidate.provinceId,
       order: candidate.order,
@@ -1132,9 +1382,9 @@ export const resolveViewport = (
 
   /* 5. reference zoom (whole country at this stage) — the readability baseline */
   const referenceScale =
-    !safe?.mapRect && safeStage.width === MAP_STAGE.width && safeStage.height === MAP_STAGE.height
+    !safe && safeStage.width === MAP_STAGE.width && safeStage.height === MAP_STAGE.height
       ? index.referenceScale
-      : fitWholeCountry(authoredRect).scale();
+      : fitWholeCountry(fullRect).scale();
 
   const [cx, cy] = rectCenter(rect);
   const inverted = projection.invert ? projection.invert([cx, cy]) : null;
@@ -1158,9 +1408,10 @@ export const resolveViewport = (
     coverageThreshold: options.coverageThreshold,
     allowOutlierDrop: options.allowOutlierDrop,
     padding: options.padding,
+    squash,
     contextFloor: options.contextFloor,
     countryLonSpan: index.lonSpan,
-    visibleLonSpan: visibleLonSpanOf(projection, safeStage, rect),
+    visibleLonSpan: visibleLonSpanOf(projection, safeStage, fitRect),
     contextFloorApplied,
     cameraMove: options.cameraMove,
     stage: safeStage,
@@ -1197,11 +1448,21 @@ export const resolveViewport = (
   return viewport;
 };
 
-/** Rebuilds the *exact* projection of a resolved viewport (render + preview). */
-export const createProjection = (viewport: FramingViewport): GeoProjection =>
-  geoMercator()
+/**
+ * Rebuilds the *exact* projection of a resolved viewport (render + preview).
+ *
+ * The squash is applied here, inside the projection, so the SVG renderer, the
+ * browser preview, the label placer and the diagnostics all consume the same
+ * squeezed coordinates — there is no second place that could disagree.
+ */
+export const createProjection = (viewport: FramingViewport): GeoProjection => {
+  const base = geoMercator()
     .scale(viewport.scale)
     .translate([viewport.translate[0], viewport.translate[1]]);
+  const squash = viewport.squash ?? 0;
+  if (!(squash > 0)) return base;
+  return squashProjection(base, 1 - squash, (viewport.rect.y0 + viewport.rect.y1) / 2);
+};
 
 /**
  * Ease-in-out (cubic). A camera move that starts and stops linearly reads as a
@@ -1292,6 +1553,9 @@ export const describeViewport = (viewport: FramingViewport): string[] => {
     `取景模式 ${viewport.mode}（松紧 ${viewport.preset}）`,
     `画布 ${viewport.stage.width}x${viewport.stage.height}（地图全出血垫底，标题与页脚浮于其上）`,
     `中心 纬度 ${viewport.center[1].toFixed(3)}, 经度 ${viewport.center[0].toFixed(3)} · zoom ${viewport.zoom.toFixed(2)} · scale ${viewport.scale.toFixed(0)}`,
+    viewport.squash > 0
+      ? `纵向压缩 ${(viewport.squash * 100).toFixed(0)}%（只压地理形状，文字与标签卡片不压；同等高度下地图宽约 ${((1 / (1 - viewport.squash)) * 100 - 100).toFixed(0)}%）`
+      : '纵向压缩 关闭（等比，形状真实）',
     `覆盖 ${viewport.coveredCount}/${viewport.totalCount}（${(viewport.coverage * 100).toFixed(0)}%）` +
       (viewport.droppedIds.length
         ? ` · 画面外：${viewport.droppedIds.join('、')}`

@@ -118,7 +118,11 @@ test('场景C：离群排名区域按覆盖阈值权衡，重点区域不会被�
   assert.deepEqual(all.droppedIds, []);
 
   // 显式把阈值降到 0.9 才允许用离群府换放大。
-  const balanced = view(rankings, {coverageThreshold: 0.9, allowOutlierDrop: true});
+  // 这里固定 verticalSquash: 0：本用例验证的是「剔除离群府 → 换来放大」这条
+  // 算法语义。压扁会压缩南北方向的离群影响，把增益从 1.5× 拉到约 1.1×，
+  // 那是另一条特性，不该混进这个断言（压扁后的行为见「纵向压扁」用例）。
+  const flat = {verticalSquash: 0};
+  const balanced = view(rankings, {coverageThreshold: 0.9, allowOutlierDrop: true, ...flat});
 
   assert.equal(balanced.totalCount, 10);
   assert.equal(balanced.coveredCount, 9);
@@ -136,7 +140,7 @@ test('场景C：离群排名区域按覆盖阈值权衡，重点区域不会被�
   );
 
   // 若为了容纳离群区域而缩小，重点区域会变得很小 —— 对比 wide 模式。
-  const wide = view(rankings, {framingPreset: 'wide'});
+  const wide = view(rankings, {framingPreset: 'wide', ...flat});
   assert.deepEqual(wide.droppedIds, [], 'wide 模式应保持全部覆盖');
   assert.ok(
     balanced.scale > wide.scale * 1.5,

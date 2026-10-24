@@ -1175,6 +1175,23 @@
               <option value="0.6">0.60 很松</option>
             </select>
           </div>
+
+          <div class="field">
+            <label
+              for="verticalSquash"
+              title="verticalSquash：纵向压扁比例。0 = 保持等比（泰国原形，南北长）；数值越大，地图越宽、南北越扁。约 19% 时地图宽度顶满安全区，再大只会更扁、不再变宽。"
+              >纵向压扁：<span id="verticalSquashValue" class="mono">12%</span></label
+            >
+            <input
+              id="verticalSquash"
+              type="range"
+              min="0"
+              max="25"
+              step="1"
+              value="12"
+            />
+          </div>
+
           <div class="field">
             <label for="cameraMove" title="cameraMove">开场运镜：</label>
             <select id="cameraMove">
@@ -1390,6 +1407,12 @@
       if ($("#contextFloor").value !== "") {
         framing.contextFloor = Number($("#contextFloor").value);
       }
+
+      // 纵向压扁：滑块是百分数（0~25），接口要的是 0~0.25 的比例。
+      // 始终显式传，0 就是"关掉压扁、回到等比"，不做"未填=默认"的推断。
+      const squashPercent = Number($("#verticalSquash").value);
+      framing.verticalSquash =
+        Math.min(Math.max(Number.isFinite(squashPercent) ? squashPercent : 12, 0), 25) / 100;
 
       if ($("#cameraMove").value !== "") {
         framing.cameraMove = $("#cameraMove").value === "true";
@@ -1674,6 +1697,12 @@
                 viewport.contextFloorApplied ? "（已后退保底图）" : "（未触发）"
               }`
             : "关闭（排名府贴满画面）",
+        ],
+        [
+          "纵向压扁",
+          (viewport.squash ?? 0) > 0
+            ? `${Math.round((viewport.squash ?? 0) * 100)}%（地图按此比例变宽；文字、标签、引线不形变）`
+            : "关闭（等比，保持泰国原形）",
         ],
         [
           "画面外区域",
@@ -2413,6 +2442,7 @@
       "#allowOutlierDrop",
       "#strictCoverage",
       "#contextFloor",
+      "#verticalSquash",
       "#cameraMove",
       "#manualLon",
       "#manualLat",
@@ -2425,6 +2455,11 @@
           scheduleFramingPreview();
         });
       });
+    });
+
+    // 滑块右边的百分比只是读数，不参与任何计算。
+    $("#verticalSquash").addEventListener("input", () => {
+      $("#verticalSquashValue").textContent = `${$("#verticalSquash").value}%`;
     });
 
     // 发布平台 / 发布描述 / 安全区遮罩开关：改了立即重算取景预览（含安全区）。

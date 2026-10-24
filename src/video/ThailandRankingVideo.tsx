@@ -127,6 +127,10 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   // per-frame movement, so the camera is just as stable as before.
   const framingStage = useMemo(
     () => ({
+      // Provinces are fitted into the *core content area*, so a province can
+      // never end up under the platform's status bar or caption. `mapRect`
+      // still travels along for callers that want the bleed rect.
+      fitRect: design.core,
       mapRect: design.map,
       labelRect: design.label,
       keepOutRect: design.keepOut,

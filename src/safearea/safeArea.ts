@@ -160,7 +160,7 @@ export type SafeAreaResolution = {
  * 配置缺失或非法时的安全兜底。数值刻意与随包配置一致，保证"没有配置文件"
  * 时仍然是一个可用的、保守的初始布局。
  */
-export const SAFE_AREA_CONFIG_VERSION = "2026-10-17.1";
+export const SAFE_AREA_CONFIG_VERSION = "2026-10-22.1";
 
 export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
   version: SAFE_AREA_CONFIG_VERSION,
