@@ -1,8 +1,9 @@
 {
-  "version": "2026-10-22.1",
+  "version": "2026-10-24.1",
   "provenance": "initial-estimate",
   "note": [
     "以上/以下所有像素值都是【工程初始估值】，不是 TikTok 或抖音的官方统一像素规范。",
+    "TikTok 底部预留压平为 400px：自然流信息流文案只显示折叠的 1~2 行（实测占位约 300~340px），展开是观众点击后的临时态，不计入安全区。抖音未实测，仍保留按文案长度分档。",
     "TikTok 的广告规范不能等同于普通自然流视频的规范；TikTok 的参数也不能当作抖音的规范。",
     "换机型、换客户端版本、换系统（含底部手势条）后，这些值都要按真实手机截图重新校准。",
     "校准完成后把对应平台的 verified 改成 true，日志里就会去掉“尚未用真机截图校准”提示。",
@@ -22,8 +23,8 @@
     "tiktok": {
       "label": "TikTok",
       "verified": false,
-      "margins": { "top": 240, "bottom": 480, "left": 72, "right": 180 },
-      "bottomByTier": { "short": 480, "medium": 540, "long": 600 },
+      "margins": { "top": 240, "bottom": 400, "left": 72, "right": 180 },
+      "bottomByTier": { "short": 400, "medium": 400, "long": 400 },
       "interactiveKeepOut": { "x": 900, "y": 650, "width": 180, "height": 930 },
       "mapBleed": { "top": 72, "bottom": 288 }
     },

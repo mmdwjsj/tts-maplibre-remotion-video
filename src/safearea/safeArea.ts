@@ -160,7 +160,7 @@ export type SafeAreaResolution = {
  * 配置缺失或非法时的安全兜底。数值刻意与随包配置一致，保证"没有配置文件"
  * 时仍然是一个可用的、保守的初始布局。
  */
-export const SAFE_AREA_CONFIG_VERSION = "2026-10-22.1";
+export const SAFE_AREA_CONFIG_VERSION = "2026-10-24.1";
 
 export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
   version: SAFE_AREA_CONFIG_VERSION,
@@ -177,8 +177,10 @@ export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
       id: "tiktok",
       label: "TikTok",
       verified: false,
-      margins: {top: 240, bottom: 480, left: 72, right: 180},
-      bottomByTier: {short: 480, medium: 540, long: 600},
+      // 自然流信息流里文案永远只显示折叠的 1~2 行（约 300~340px 实测占位），
+      // 展开是观众主动点击的临时态，不算安全区。400 = 340 + 60 余量。
+      margins: {top: 240, bottom: 400, left: 72, right: 180},
+      bottomByTier: {short: 400, medium: 400, long: 400},
       interactiveKeepOut: {x: 900, y: 650, width: 180, height: 930},
       // 底图各吃进上/下预留带的 60%：泰国形状特别瘦高，等比缩放下高度先顶满，
       // 不让底图纵向出血的话两侧会各空出约 220px（画面宽度的 21%）。

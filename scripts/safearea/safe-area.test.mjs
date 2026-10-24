@@ -53,11 +53,11 @@ const geojson = JSON.parse(
 
 const EAST = ['TH-10', 'TH-11', 'TH-13', 'TH-20', 'TH-21', 'TH-22', 'TH-23'];
 
-/** 描述样例：字符数 -> 期望等级（边界值来自配置文件，不是硬编码的猜测）。 */
+/** 描述样例：字符数 -> 等级。TikTok 底部压平为 400（折叠态），抖音仍按文案分档。 */
 const TIER_CASES = [
-  ['short', 20, 480],
-  ['medium', 120, 540],
-  ['long', 260, 600],
+  ['short', 20, {tiktok: 400, douyin: 480}],
+  ['medium', 120, {tiktok: 400, douyin: 540}],
+  ['long', 260, {tiktok: 400, douyin: 600}],
 ];
 
 const PLATFORMS = ['tiktok', 'douyin'];
@@ -79,7 +79,8 @@ const labelInput = (resolution, cx, cy) => ({
  * -------------------------------------------------------------------------- */
 
 for (const platform of PLATFORMS) {
-  for (const [tier, chars, bottom] of TIER_CASES) {
+  for (const [tier, chars, bottomByPlatform] of TIER_CASES) {
+    const bottom = bottomByPlatform[platform];
     test(`场景：${platform} + ${tier} 描述（${chars} 字符）→ 底部预留 ${bottom}px`, () => {
       const resolution = resolveSafeArea(config, {
         platform,
@@ -327,7 +328,7 @@ test('场景：描述缺失时回退到 short 档并给出警告', () => {
   const empty = resolveSafeArea(config, {platform: 'tiktok', description: ''});
   assert.equal(empty.descriptionTier, 'short');
   assert.equal(empty.descriptionChars, 0);
-  assert.equal(empty.margins.bottom, 480);
+  assert.equal(empty.margins.bottom, 400);
   assert.ok(empty.warnings.some((warning) => warning.includes('发布描述缺失')));
 
   const missing = resolveSafeArea(config, {});
@@ -544,8 +545,10 @@ test('安全区接入取景：地图底图可用区与标签安全区都按平�
   assert.equal(viewShort.mapRect.y0, Math.max(0, short.margins.top - config.platforms.tiktok.mapBleed.top));
   assert.equal(viewShort.labelRect.x1, short.labelRect.x1);
   assert.equal(viewShort.keepOutRect.x0, short.interactiveGapRect.x0);
-  // 描述越长，底部预留越大 → 地图视野越靠上（视野随等级调整）。
-  assert.ok(viewLong.rect.y1 < viewShort.rect.y1);
+  // TikTok 底部压平为 400：三档预留等高，视野不再随描述长度变化。
+  assert.equal(short.margins.bottom, 400);
+  assert.equal(long.margins.bottom, 400);
+  assert.equal(viewLong.rect.y1, viewShort.rect.y1);
   // 但排名区域仍然全部在画面内：安全区不会让内容消失。
   assert.equal(viewShort.coverage, 1);
   assert.deepEqual(viewShort.droppedIds, []);
