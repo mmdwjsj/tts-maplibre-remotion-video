@@ -168,6 +168,12 @@ export type FramingOptions = {
    * framing from frame 0 (the pre-move behaviour).
    */
   cameraMove?: boolean;
+  /**
+   * 取景远近：在自动取景结果上整体拉近/拉远的倍率（0.25~4，默认 1 = 现状）。
+   * >1 更靠近地图（放大，画面里地图更大），<1 更远离地图（缩小，地图显得
+   * 更小）。只作用于数据驱动取景；最终仍受 minZoom/maxZoom 约束。
+   */
+  zoomDistance?: number;
   /** When true, a coverage shortfall is reported as a loud warning. */
   strictCoverage?: boolean;
   manualCenter?: [number, number];
@@ -189,6 +195,8 @@ export type ResolvedFramingOptions = {
   maxZoom: number;
   /** Resolved intro camera move switch. */
   cameraMove: boolean;
+  /** Resolved zoom bias on the data-driven framing (1 = untouched auto fit). */
+  zoomDistance: number;
   /** Resolved opt-in for dropping ranked provinces (default: never drop). */
   allowOutlierDrop: boolean;
   strictCoverage: boolean;
@@ -210,6 +218,7 @@ export const DEFAULT_FRAMING_OPTIONS: ResolvedFramingOptions = {
   minZoom: 5,
   maxZoom: 12,
   cameraMove: true,
+  zoomDistance: 1,
   strictCoverage: false,
 };
 
@@ -498,6 +507,8 @@ export type FramingViewport = {
   contextFloorApplied: boolean;
   /** Whether the intro camera move (whole country → this framing) is enabled. */
   cameraMove: boolean;
+  /** Zoom bias applied to the data-driven framing (1 = untouched auto fit). */
+  zoomDistance: number;
   keptIds: string[];
   droppedIds: string[];
   missingIds: string[];
@@ -670,6 +681,22 @@ export const normalizeFramingOptions = (
     } else {
       warnings.push(
         `cameraMove 必须是布尔值（收到 ${String(input.cameraMove)}），已回退为 ${options.cameraMove}`,
+      );
+    }
+  }
+
+  if (input.zoomDistance !== undefined) {
+    const distance = Number(input.zoomDistance);
+    if (isFiniteNumber(distance)) {
+      // 收敛而不是拒绝：越界值贴到边界，保证生成不被打断。
+      const bounded = clamp(distance, 0.25, 4);
+      if (Math.abs(bounded - distance) > 1e-9) {
+        warnings.push(`zoomDistance ${distance} 超出 [0.25, 4]，已收敛为 ${bounded}`);
+      }
+      options.zoomDistance = bounded;
+    } else {
+      warnings.push(
+        `zoomDistance 必须是 0.25~4 的倍率（收到 ${String(input.zoomDistance)}），已回退为 ${options.zoomDistance}`,
       );
     }
   }
@@ -1019,6 +1046,7 @@ const cacheKey = (
     options.minZoom,
     options.maxZoom,
     options.cameraMove ? 1 : 0,
+    options.zoomDistance,
     options.strictCoverage ? 1 : 0,
     options.manualCenter ? options.manualCenter.join(',') : '-',
     options.manualZoom ?? '-',
@@ -1293,6 +1321,29 @@ export const resolveViewport = (
     }
   }
 
+  /* 2c. 取景远近（zoomDistance）：在自动取景结果上整体拉近/拉远。
+   *
+   * 摆在覆盖分类（步骤 3）之前是刻意的：拉近后溢出 fitRect 的府会如实
+   * 报告为"未进入画面"，而不是悄悄消失。以 fitRect 中心为支点缩放，主体
+   * 构图（含右移偏移）跟着等比移动，不会突然跳位。手动取景有 manualZoom、
+   * 全图模式本身就是终点，因此只作用于数据驱动取景。
+   */
+  if (mode === 'data-driven' && Math.abs(options.zoomDistance - 1) > 1e-9) {
+    const rawTarget = projection.scale() * options.zoomDistance;
+    const boundedScale = clamp(
+      rawTarget,
+      zoomToScale(options.minZoom),
+      zoomToScale(options.maxZoom),
+    );
+    const achieved = boundedScale / projection.scale();
+    projection = rescaleKeepingPivot(projection, boundedScale, rectCenter(fitRect));
+    if (Math.abs(boundedScale - rawTarget) > 1e-6) {
+      warnings.push(
+        `取景远近 ×${options.zoomDistance} 超出 zoom 限制 [${options.minZoom}, ${options.maxZoom}]，实际收敛为 ×${achieved.toFixed(2)}`,
+      );
+    }
+  }
+
   /* 3. classify every matched region against the final frame */
   const path = geoPath(projection);
   const framed = new Map<string, FrameMetric>();
@@ -1389,6 +1440,7 @@ export const resolveViewport = (
     visibleLonSpan: visibleLonSpanOf(projection, safeStage, fitRect),
     contextFloorApplied,
     cameraMove: options.cameraMove,
+    zoomDistance: options.zoomDistance,
     stage: safeStage,
     rect,
     labelRect: safeLabelRect,
@@ -1532,6 +1584,9 @@ export const describeViewport = (viewport: FramingViewport): string[] => {
       ? `纵向压缩 ${(viewport.squash * 100).toFixed(0)}%（只压地理形状，文字与标签卡片不压；同等高度下地图宽约 ${((1 / (1 - viewport.squash)) * 100 - 100).toFixed(0)}%）`
       : '纵向压缩 关闭（等比，形状真实）',
     `主体右移 ${viewport.subjectOffsetX}px（排名府中心 = 安全区中心 ${viewport.subjectOffsetX >= 0 ? '+' : '−'} ${Math.abs(viewport.subjectOffsetX)}px）`,
+    viewport.zoomDistance === 1
+      ? '取景远近 ×1.00（自动取景现状）'
+      : `取景远近 ×${viewport.zoomDistance.toFixed(2)}（100% = 自动取景现状；>100% 拉近放大，<100% 拉远缩小）`,
     `覆盖 ${viewport.coveredCount}/${viewport.totalCount}（${(viewport.coverage * 100).toFixed(0)}%）` +
       (viewport.droppedIds.length
         ? ` · 画面外：${viewport.droppedIds.join('、')}`

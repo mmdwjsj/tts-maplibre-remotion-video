@@ -1209,6 +1209,22 @@
           </div>
 
           <div class="field">
+            <label
+              for="zoomDistance"
+              title="zoomDistance：取景远近。100% = 自动取景现状（默认）；>100% 拉近放大（地图在画面里更大，太近会挤出画面并有警告）；<100% 拉远缩小（地图显得更小）。范围 25%~400%，最终仍受 zoom 上下限约束。"
+              >取景远近：<span id="zoomDistanceValue" class="mono">100%</span></label
+            >
+            <input
+              id="zoomDistance"
+              type="range"
+              min="25"
+              max="400"
+              step="5"
+              value="100"
+            />
+          </div>
+
+          <div class="field">
             <label for="cameraMove" title="cameraMove">开场运镜：</label>
             <select id="cameraMove">
               <option value="">跟随默认（开启）</option>
@@ -1433,6 +1449,12 @@
       // 主体右移：滑块像素值（-200~200），0 = 严格居中不偏移。始终显式传。
       const offsetPx = Number($("#subjectOffsetX").value);
       framing.subjectOffsetX = Number.isFinite(offsetPx) ? offsetPx : 20;
+
+      // 取景远近：滑块是百分数（25~400），接口要 0.25~4 的倍率。
+      // 100 = 自动取景现状（默认）。始终显式传。
+      const zoomPercent = Number($("#zoomDistance").value);
+      framing.zoomDistance =
+        Math.min(Math.max(Number.isFinite(zoomPercent) ? zoomPercent : 100, 25), 400) / 100;
 
       if ($("#cameraMove").value !== "") {
         framing.cameraMove = $("#cameraMove").value === "true";
@@ -2464,6 +2486,7 @@
       "#contextFloor",
       "#verticalSquash",
       "#subjectOffsetX",
+      "#zoomDistance",
       "#cameraMove",
       "#manualLon",
       "#manualLat",
@@ -2484,6 +2507,9 @@
     });
     $("#subjectOffsetX").addEventListener("input", () => {
       $("#subjectOffsetXValue").textContent = `${$("#subjectOffsetX").value}px`;
+    });
+    $("#zoomDistance").addEventListener("input", () => {
+      $("#zoomDistanceValue").textContent = `${$("#zoomDistance").value}%`;
     });
 
     // 发布平台 / 发布描述 / 安全区遮罩开关：改了立即重算取景预览（含安全区）。
