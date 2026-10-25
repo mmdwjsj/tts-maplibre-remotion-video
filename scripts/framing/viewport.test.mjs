@@ -39,6 +39,9 @@ const geojson = JSON.parse(
 const view = (provinceIds, options) =>
   resolveViewport(geojson, provinceIds, options, MAP_STAGE);
 
+/** 与 resolveViewport.ts 里的 SUBJECT_CENTER_OFFSET_X 保持一致。 */
+const SUBJECT_CENTER_OFFSET_X = 20;
+
 /** How much bigger the framing is compared to showing the whole country. */
 const zoomRatio = (viewport) => Math.pow(2, viewport.zoom - viewport.referenceZoom);
 
@@ -409,7 +412,7 @@ test('zoom 被收敛后视口仍以目标区域为中心，不产生漂移', () 
   const bounds = geoPath(createProjection(single)).bounds(feature);
   const centerX = (bounds[0][0] + bounds[1][0]) / 2;
   const centerY = (bounds[0][1] + bounds[1][1]) / 2;
-  const rectCenterX = (single.rect.x0 + single.rect.x1) / 2;
+  const rectCenterX = (single.rect.x0 + single.rect.x1) / 2 + SUBJECT_CENTER_OFFSET_X;
   const rectCenterY = (single.rect.y0 + single.rect.y1) / 2;
   assert.ok(Math.abs(centerX - rectCenterX) < 3, `横向漂移 ${(centerX - rectCenterX).toFixed(2)}px`);
   assert.ok(Math.abs(centerY - rectCenterY) < 3, `纵向漂移 ${(centerY - rectCenterY).toFixed(2)}px`);
@@ -564,7 +567,7 @@ test('旧客户端只发 coverageThreshold=0.9 也绝不会隐藏排名府（必
   assert.equal(view(rankings, {allowOutlierDrop: 'yes'}).allowOutlierDrop, false);
 });
 
-test('南北长链：国土左右留白必须对称（画面里不偏左也不偏右）', () => {
+test('南北长链：排名府中心对齐取景框中心并右移 20px', () => {
   const cases = {
     泰北5府加春蓬: ['TH-54', 'TH-56', 'TH-57', 'TH-64', 'TH-65', 'TH-86'],
     极北加极南: ['TH-57', 'TH-96'],
@@ -574,37 +577,35 @@ test('南北长链：国土左右留白必须对称（画面里不偏左也不�
     const framed = view(ids, {});
     assert.equal(framed.coveredCount, ids.length, `${name}：排名府必须全部可见`);
 
+    // 排名府联合外框的中心 = 取景框中心 + 20px（容差 3px，只有取整误差）。
     const path = geoPath(createProjection(framed));
-    const [[x0], [x1]] = path.bounds(geojson);
-    const left = x0;
-    const right = MAP_STAGE.width - x1;
-    const center = (x0 + x1) / 2;
-
-    // 国土在画面内的左右留白必须相等（容差 2px，只有取整误差）。
-    assert.ok(
-      Math.abs(left - right) < 2,
-      `${name}：左留白 ${left.toFixed(1)} / 右留白 ${right.toFixed(1)} 不对称`,
+    const ranked = geojson.features.filter((feature) =>
+      ids.includes(feature.properties.provinceId),
     );
-    // 并且国土中心就是画布中心。
+    const [[bx0], [bx1]] = path.bounds({type: 'FeatureCollection', features: ranked});
+    const centerX = (bx0 + bx1) / 2;
+    const targetX = (framed.rect.x0 + framed.rect.x1) / 2 + SUBJECT_CENTER_OFFSET_X;
     assert.ok(
-      Math.abs(center - MAP_STAGE.width / 2) < 2,
-      `${name}：国土中心 ${center.toFixed(1)} 偏离画布中心 ${MAP_STAGE.width / 2}`,
+      Math.abs(centerX - targetX) < 3,
+      `${name}：排名府中心 ${centerX.toFixed(1)} 偏离目标 ${targetX.toFixed(1)}`,
     );
-    // 排名府仍然全部落在画面里（居中不会把任何一个推出取景框）。
+    // 排名府仍然全部落在画面里。
     for (const diagnostic of framed.diagnostics) {
       assert.ok(diagnostic.inside, `${name}：${diagnostic.provinceId} 被推出了画面`);
     }
   }
 });
 
-test('能贴着两侧时就不要留空：跨度覆盖全国宽度时左右留白几乎为零', () => {
-  // 泰北 5 府 + 春蓬：纵向被排名府撑满，横向刚好铺到画布两侧。
-  const framed = view(['TH-54', 'TH-56', 'TH-57', 'TH-64', 'TH-65', 'TH-86'], {});
+test('南北长链下国土可以不对称：排名府居中优先于国土居中', () => {
+  // 排名条偏在国土一侧时，主体居中意味着国土整体偏向另一边 —— 这是新语义。
+  const framed = view(['TH-57', 'TH-96'], {});
   const path = geoPath(createProjection(framed));
-  const [[x0], [x1]] = path.bounds(geojson);
-  const left = x0;
-  const right = MAP_STAGE.width - x1;
-  assert.ok(Math.abs(left - right) < 2, `左右不对称：${left.toFixed(1)} / ${right.toFixed(1)}`);
-  assert.ok(left < MAP_STAGE.width * 0.05, `左右留白应几乎为零，实际 ${left.toFixed(1)}px`);
-  assert.ok(right < MAP_STAGE.width * 0.05, `左右留白应几乎为零，实际 ${right.toFixed(1)}px`);
+  const [[cx0], [cx1]] = path.bounds(geojson);
+  const countryCenter = (cx0 + cx1) / 2;
+  const rectCenter = (framed.rect.x0 + framed.rect.x1) / 2;
+  // 国土中心不再等于取景框中心（否则就是旧的国土居中语义），但偏移受控。
+  assert.ok(
+    Math.abs(countryCenter - rectCenter) > 5 || countryCenter > rectCenter,
+    `国土中心 ${countryCenter.toFixed(1)} 仍在取景框中心附近，主体居中未生效`,
+  );
 });

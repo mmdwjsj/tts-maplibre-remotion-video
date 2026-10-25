@@ -166,7 +166,7 @@ export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
   version: SAFE_AREA_CONFIG_VERSION,
   canvas: {width: 1080, height: 1920},
   defaultPlatform: "tiktok",
-  contentGapPx: 24,
+  contentGapPx: 5,
   tiers: [
     {id: "short", tier: "short", maxChars: 80, bottomPx: 480},
     {id: "medium", tier: "medium", maxChars: 200, bottomPx: 540},

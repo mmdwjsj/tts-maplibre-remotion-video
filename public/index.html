@@ -1193,6 +1193,22 @@
           </div>
 
           <div class="field">
+            <label
+              for="subjectOffsetX"
+              title="subjectOffsetX：排名府整体中心对齐安全区中心后，再向右偏移的像素。默认 20 补偿右侧互动栏造成的视觉偏左；可为负（向左）。取景框装不下时由兜底自动后退。"
+              >主体右移：<span id="subjectOffsetXValue" class="mono">20px</span></label
+            >
+            <input
+              id="subjectOffsetX"
+              type="range"
+              min="-200"
+              max="200"
+              step="1"
+              value="20"
+            />
+          </div>
+
+          <div class="field">
             <label for="cameraMove" title="cameraMove">开场运镜：</label>
             <select id="cameraMove">
               <option value="">跟随默认（开启）</option>
@@ -1413,6 +1429,10 @@
       const squashPercent = Number($("#verticalSquash").value);
       framing.verticalSquash =
         Math.min(Math.max(Number.isFinite(squashPercent) ? squashPercent : 12, 0), 25) / 100;
+
+      // 主体右移：滑块像素值（-200~200），0 = 严格居中不偏移。始终显式传。
+      const offsetPx = Number($("#subjectOffsetX").value);
+      framing.subjectOffsetX = Number.isFinite(offsetPx) ? offsetPx : 20;
 
       if ($("#cameraMove").value !== "") {
         framing.cameraMove = $("#cameraMove").value === "true";
@@ -2443,6 +2463,7 @@
       "#strictCoverage",
       "#contextFloor",
       "#verticalSquash",
+      "#subjectOffsetX",
       "#cameraMove",
       "#manualLon",
       "#manualLat",
@@ -2457,9 +2478,12 @@
       });
     });
 
-    // 滑块右边的百分比只是读数，不参与任何计算。
+    // 滑块右边的读数只是显示，不参与任何计算。
     $("#verticalSquash").addEventListener("input", () => {
       $("#verticalSquashValue").textContent = `${$("#verticalSquash").value}%`;
+    });
+    $("#subjectOffsetX").addEventListener("input", () => {
+      $("#subjectOffsetXValue").textContent = `${$("#subjectOffsetX").value}px`;
     });
 
     // 发布平台 / 发布描述 / 安全区遮罩开关：改了立即重算取景预览（含安全区）。

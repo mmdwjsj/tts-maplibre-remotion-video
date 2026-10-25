@@ -23,7 +23,7 @@
 | `version` | 配置版本号（当前 `2026-10-16.1`），进生成日志与预览 |
 | `canvas` | 画布尺寸，默认 1080×1920 |
 | `defaultPlatform` | 请求未指定平台时用哪个平台 |
-| `contentGapPx` | 重要内容与安全区边界 / 禁入区的额外间距（24px） |
+| `contentGapPx` | 重要内容与安全区边界 / 禁入区的额外间距（5px） |
 | `descriptionTiers[]` | 描述长度分档：`maxChars` 边界 + 各档底部预留 |
 | `platforms.<id>.margins` | 上/下/左/右四边预留 |
 | `platforms.<id>.bottomByTier` | 按描述等级覆盖底部预留（优先于全局档位值） |

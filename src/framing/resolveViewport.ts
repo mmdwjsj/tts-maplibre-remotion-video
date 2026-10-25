@@ -109,8 +109,8 @@ export type FramingSafeArea = {
 const MIN_RECT_SIZE = 80;
 const WEB_MERCATOR_TILE_SIZE = 256;
 const DEFAULT_CENTER: [number, number] = [100.5, 15];
-/** How much of the country's lon span must be visible before re-centring it. */
-const COUNTRY_CENTER_TOLERANCE = 0.95;
+/** 排名府中心对齐安全区中心后，再整体向右偏移的像素（右侧互动栏让画面重心偏左，用它补偿）。 */
+const SUBJECT_CENTER_OFFSET_X = 20;
 
 /* -------------------------------------------------------------------------- *
  * Options
@@ -150,6 +150,11 @@ export type FramingOptions = {
    */
   verticalSquash?: number;
   /**
+   * 排名府中心对齐取景框中心后整体向右偏移的像素（默认 20，补偿右侧互动栏
+   * 造成的视觉重心偏左）。可为负（向左）。溢出由收敛循环兜底。
+   */
+  subjectOffsetX?: number;
+  /**
    * Context floor: the smallest share of the country's longitude span the frame
    * is allowed to show, as a fraction (`0` disables it, preset default when
    * omitted). See `PRESET_RULES.contextFloor`.
@@ -176,6 +181,8 @@ export type ResolvedFramingOptions = {
   padding: number;
   /** Resolved vertical squash (0 = true proportions). */
   verticalSquash: number;
+  /** Resolved horizontal offset applied after centring the ranked subject (px). */
+  subjectOffsetX: number;
   /** Resolved context floor (fraction of the country lon span, 0 = off). */
   contextFloor: number;
   minZoom: number;
@@ -198,6 +205,7 @@ export const DEFAULT_FRAMING_OPTIONS: ResolvedFramingOptions = {
   allowOutlierDrop: false,
   padding: -1,
   verticalSquash: 0.12,
+  subjectOffsetX: SUBJECT_CENTER_OFFSET_X,
   contextFloor: -1,
   minZoom: 5,
   maxZoom: 12,
@@ -309,72 +317,31 @@ const rescaleKeepingPivot = (
 };
 
 /**
- * Slides the map horizontally so the country's midpoint sits on the **centre of
- * the fit rect**, i.e. the empty water left and right of the landmass is split
- * evenly inside the area the platform leaves free.
+ * Slides the map horizontally so the ranked provinces' shared midpoint sits on
+ * the fit rect's centre, plus a fixed optical offset to the right.
  *
- * The target is the *rect* centre, not the canvas centre: once a safe area is in
- * play those two differ (the right-hand action rail pushes the core area left of
- * the canvas midline), and aligning to the canvas would offset the whole country
- * by that difference — enough to push an eastern province out of the frame.
+ * No conditionals: whatever the projection currently shows (a single province,
+ * a north-south chain with most of the country visible, the whole map), the
+ * subject is centred on the rect and nudged right. If the ranked set already
+ * fills the rect width, the +20px nudge eats into the right margin and the
+ * convergence pass after this step repairs any overflow by stepping back.
  *
  * `boundsInFrame` is the union of the ranked provinces' projected boxes in the
- * current projection. When supplied, the shift is clamped so the move can never
- * push a ranked province out of `rect` — the country re-centres as far as it is
- * allowed to, and no further.
- *
- * `x = translate[0] + scale * λ` in d3-geo's Mercator, so moving the geography
- * by Δλ pixels is `scale * Δλ`. To bring λ_center onto `cx` the translate must
- * move by `scale * (λ_current - λ_center)` — the *current* longitude minus the
- * wanted one. (Sign matters: the opposite order pushes the map twice as far off
- * centre instead of centring it.)
+ * current projection. `x = translate[0] + scale * λ` in d3-geo's Mercator, so a
+ * pixel shift is applied directly to `translate[0]` (no longitude round-trip).
  */
-const alignCountryLonCenter = (
+const alignSubjectCenter = (
   projection: GeoProjection,
-  stage: FramingStage,
   rect: FramingRect,
-  lonCenter: number,
-  lonSpan: number,
-  boundsInFrame?: FramingRect,
+  boundsInFrame: FramingRect,
+  offsetX: number,
 ): GeoProjection => {
-  if (!(lonSpan > 0) || !projection.invert) return projection;
-  // Only meaningful when the frame holds (nearly) the whole country: then the
-  // empty water is a composition choice. When the frame shows a fraction of the
-  // country — one province, or a cluster on one side — sliding to the country's
-  // midpoint would just push the subject off centre.
-  //
-  // The 95% tolerance is what keeps this working under a vertical squash: the
-  // squeeze widens the landmass by ~14%, so a north-south chain that used to
-  // span slightly less than the country can end up spanning slightly more.
-  const visible = visibleLonSpanOf(projection, stage, rect);
-  if (!(visible >= lonSpan * COUNTRY_CENTER_TOLERANCE)) return projection;
-  const cx = rectCenter(rect)[0];
-  const cy = rectCenter(rect)[1];
-  const current = projection.invert([cx, cy]);
-  if (!current || !Number.isFinite(current[0])) return projection;
+  const width = boundsInFrame.x1 - boundsInFrame.x0;
+  if (!(width > 0)) return projection;
+  const targetX = rectCenter(rect)[0] + offsetX;
+  const shift = targetX - (boundsInFrame.x0 + width / 2);
+  if (!Number.isFinite(shift) || Math.abs(shift) < 0.5) return projection;
   const scale = projection.scale();
-  let shift = (scale * (current[0] - lonCenter) * Math.PI) / 180;
-  if (!Number.isFinite(shift)) return projection;
-
-  if (boundsInFrame) {
-    // Only slide when the ranked set leaves horizontal slack. If it already
-    // spans the rect width, the horizontal position is *pinned* by the data and
-    // re-centring on the country would just shove a province towards an edge
-    // (a single-province framing is the extreme case).
-    const rectWidth = rect.x1 - rect.x0;
-    const usedWidth = boundsInFrame.x1 - boundsInFrame.x0;
-    if (rectWidth - usedWidth < rectWidth * 0.02) return projection;
-
-    // How far the geography may slide before a ranked province leaves the rect.
-    const line = 1;
-    const minShift = rect.x0 - boundsInFrame.x0 - line;
-    const maxShift = rect.x1 - boundsInFrame.x1 + line;
-    // No room to move at all (the ranked set already fills the width): leave it.
-    if (minShift > maxShift) return projection;
-    shift = clamp(shift, minShift, maxShift);
-  }
-
-  if (Math.abs(shift) < 0.5) return projection;
   const [tx, ty] = projection.translate();
   return geoMercator()
     .scale(scale)
@@ -507,6 +474,8 @@ export type FramingViewport = {
   padding: number;
   /** Vertical squash actually applied (0 = true proportions). */
   squash: number;
+  /** Horizontal offset applied after centring the ranked subject (px). */
+  subjectOffsetX: number;
   stage: FramingStage;
   /** The area the ranked regions are fitted into (full canvas minus edge safety). */
   rect: FramingRect;
@@ -644,6 +613,16 @@ export const normalizeFramingOptions = (
     } else {
       warnings.push(
         `verticalSquash 必须是 [0, 0.25] 之间的数值（收到 ${String(input.verticalSquash)}），已回退为 ${options.verticalSquash}`,
+      );
+    }
+  }
+
+  if (input.subjectOffsetX !== undefined) {
+    if (isFiniteNumber(input.subjectOffsetX) && input.subjectOffsetX >= -200 && input.subjectOffsetX <= 200) {
+      options.subjectOffsetX = input.subjectOffsetX;
+    } else {
+      warnings.push(
+        `subjectOffsetX 必须是 [-200, 200] 之间的像素值（收到 ${String(input.subjectOffsetX)}），已回退为 ${options.subjectOffsetX}`,
       );
     }
   }
@@ -1035,6 +1014,7 @@ const cacheKey = (
     options.allowOutlierDrop ? 1 : 0,
     options.padding,
     options.verticalSquash,
+    options.subjectOffsetX,
     options.contextFloor,
     options.minZoom,
     options.maxZoom,
@@ -1245,10 +1225,9 @@ export const resolveViewport = (
       projection = fitWholeCountry(fullRect);
     }
 
-    // Every ranked province is inside the frame: with the frame wider than the
-    // ranked strip, re-centre horizontally on the country so the empty margin is
-    // split instead of piling up on one side. The shift is clamped to the room
-    // the ranked set leaves, so this can never trade centring for coverage.
+    // Subject-first composition: centre the ranked provinces' shared midpoint
+    // on the fit rect (plus a fixed optical nudge right) in every case. Any
+    // overflow this creates is repaired by the convergence pass below.
     if (framed.length >= candidates.length) {
       const unionPath = geoPath(projection);
       const boundsInFrame = candidates.reduce<FramingRect | null>((acc, candidate) => {
@@ -1269,14 +1248,9 @@ export const resolveViewport = (
             }
           : box;
       }, null);
-      projection = alignCountryLonCenter(
-        projection,
-        safeStage,
-        fitRect,
-        index.lonCenter,
-        index.lonSpan,
-        boundsInFrame ?? undefined,
-      );
+      if (boundsInFrame) {
+        projection = alignSubjectCenter(projection, fitRect, boundsInFrame, options.subjectOffsetX);
+      }
     }
   }
 
@@ -1284,7 +1258,7 @@ export const resolveViewport = (
    *
    * `selectFramed` already fits the kept set, but two later steps can shrink the
    * usable area without re-fitting: the zoom clamp (which only ever scales the
-   * same centre) and `alignCountryLonCenter`. Anything that still pokes out is
+   * same centre) and `alignSubjectCenter`. Anything that still pokes out is
    * pulled back by stepping the camera back a notch at a time — a few percent of
    * scale, at most a handful of iterations, so the composition barely moves.
    */
@@ -1409,6 +1383,7 @@ export const resolveViewport = (
     allowOutlierDrop: options.allowOutlierDrop,
     padding: options.padding,
     squash,
+    subjectOffsetX: options.subjectOffsetX,
     contextFloor: options.contextFloor,
     countryLonSpan: index.lonSpan,
     visibleLonSpan: visibleLonSpanOf(projection, safeStage, fitRect),
@@ -1556,6 +1531,7 @@ export const describeViewport = (viewport: FramingViewport): string[] => {
     viewport.squash > 0
       ? `纵向压缩 ${(viewport.squash * 100).toFixed(0)}%（只压地理形状，文字与标签卡片不压；同等高度下地图宽约 ${((1 / (1 - viewport.squash)) * 100 - 100).toFixed(0)}%）`
       : '纵向压缩 关闭（等比，形状真实）',
+    `主体右移 ${viewport.subjectOffsetX}px（排名府中心 = 安全区中心 ${viewport.subjectOffsetX >= 0 ? '+' : '−'} ${Math.abs(viewport.subjectOffsetX)}px）`,
     `覆盖 ${viewport.coveredCount}/${viewport.totalCount}（${(viewport.coverage * 100).toFixed(0)}%）` +
       (viewport.droppedIds.length
         ? ` · 画面外：${viewport.droppedIds.join('、')}`

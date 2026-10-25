@@ -13,7 +13,7 @@
   ],
   "canvas": { "width": 1080, "height": 1920 },
   "defaultPlatform": "tiktok",
-  "contentGapPx": 24,
+  "contentGapPx": 5,
   "descriptionTiers": [
     { "tier": "short", "maxChars": 80, "bottomPx": 480 },
     { "tier": "medium", "maxChars": 200, "bottomPx": 540 },
