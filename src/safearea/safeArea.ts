@@ -8,11 +8,18 @@
  *
  * 这个模块把"哪些地方会被平台 UI 盖住"变成可配置、可计算、可验证的数据：
  *
- * 1. 配置（`src/config/safe-area.config.json`）里 TikTok 与抖音各有一套独立
- *    的四边预留 + 右侧互动栏禁入区，并带版本号，便于按真机截图校准。
+ * 1. 分区只有四个：顶部导航、右侧互动栏、底部账号 ID 与描述、中间核心内容。
+ *    配置（`src/config/safe-area.config.json`）里 TikTok 与抖音各有一套独立的
+ *    四边预留 + 互动栏纵向范围，并带版本号，便于按真机截图校准。
  * 2. 发布描述按字符数落到 short / medium / long 三档，每档有自己的底部预留。
- * 3. 计算出一组矩形：核心内容安全区、浮动标签安全区、禁入区、地图底图允许区。
- * 4. 提供越界 / 禁入区相交 / 标签重叠检测，输出**可定位**的诊断（元素 id、
+ * 3. 取景矩形就是中间核心区：`mapRect` 恒等于 `coreRect`（2026-11-07 合并）。
+ *    `labelRect` / `interactiveRect` / `interactiveGapRect` / 四条 band 都是从
+ *    这四个分区派生的几何量，不是分区：不写进配置、不画成预览里的第二个框。
+ * 4. 四个分区的四条边界就是**唯一一组可调参数**（`request.coreMargins`）：
+ *    上 / 下 / 左 / 右 = 核心框四条边距屏幕四边的像素。预览与成片把同一组
+ *    值送给同一个 `resolveSafeArea`，所以只有一个矩形、只有一套来源。
+ *    不传时按平台配置 + 发布描述分档派生，默认构图不受影响。
+ * 5. 提供越界 / 禁入区相交 / 标签重叠检测，输出**可定位**的诊断（元素 id、
  *    所属组件、越界方向、越界像素），而不是静默隐藏内容。
  *
  * 重要：所有像素值都是**工程初始估值**，不是 TikTok 或抖音的官方统一规范。
@@ -57,15 +64,11 @@ export type SafeAreaPlatformInput = {
   margins?: Partial<SafeMargins>;
   /** 该平台在各描述等级下的底部预留（覆盖全局 tier 的 bottomPx）。 */
   bottomByTier?: Record<string, number>;
-  interactiveKeepOut?: Partial<SafeKeepOut> | null;
   /**
-   * 地图底图允许吃进上/下预留带多少像素。
-   *
-   * 底图只是垫在最底下的一层（标题、页脚、渐变遮罩都浮在它上面），让它纵向
-   * 出血可以把整幅地图撑大、明显收窄两侧留白；标题/标签仍然只看 coreRect /
-   * labelRect，不受影响。设为 0 即回到"底图完全不进预留带"的保守布局。
+   * 右侧互动栏（四个分区之一）的纵向范围。`x` / `width` 由 `margins.right`
+   * 推导，配置里不必写；旧配置仍可显式给 x/width，行为不变。
    */
-  mapBleed?: {top?: number; bottom?: number};
+  interactiveKeepOut?: Partial<SafeKeepOut> | null;
 };
 
 export type SafeAreaConfigInput = {
@@ -84,8 +87,6 @@ export type ResolvedPlatform = {
   margins: SafeMargins;
   bottomByTier: Partial<Record<DescriptionTierId, number>>;
   interactiveKeepOut: SafeKeepOut | null;
-  /** 地图底图允许吃进上/下预留带的像素（只影响底图，不影响标题/标签）。 */
-  mapBleed: {top: number; bottom: number};
 };
 
 export type ResolvedSafeAreaConfig = {
@@ -101,6 +102,19 @@ export type SafeAreaRequest = {
   platform?: unknown;
   /** 程序自动生成的**发布描述**，与视频内字幕是两回事。 */
   description?: unknown;
+  /**
+   * 四个分区的四条边界，也就是**唯一一个矩形（核心框）**的四条边距屏幕四边
+   * 的像素：`{top, bottom, left, right}`。
+   *
+   * 这是唯一的构图参数入口：预览与成片把同一组值送给同一个 `resolveSafeArea`，
+   * 核心框、取景矩形、四条压暗带、右侧互动栏横向全部从它派生，不存在第二套
+   * 位移/间距叠加，也不存在「预览一个框、计算另一个框」。
+   *
+   * 传 `null` 或省略 = 完全按平台配置 + 发布描述分档派生（默认构图）。
+   * 只传其中几条也可以，未提供的边仍走派生值。值必须是非负数，非法值回退
+   * 派生值并逐条告警；超过画布 45% 的边由既有收敛逻辑处理。
+   */
+  coreMargins?: unknown;
 };
 
 export type DescriptionTierMatch = {
@@ -123,6 +137,8 @@ export type SafeAreaResolution = {
   verified: boolean;
   canvas: SafeCanvas;
   margins: SafeMargins;
+  /** 本次请求是否手动调过四分区边界（true 时四边以请求值为准，不再随描述分档）。 */
+  coreMarginsApplied: boolean;
   /** 底部预留取自等级（tier）还是平台兜底（platform）。 */
   bottomSource: "tier" | "platform";
   contentGapPx: number;
@@ -131,9 +147,13 @@ export type SafeAreaResolution = {
   description: string;
   tierRule: ResolvedTierRule;
   tiers: ResolvedTierRule[];
-  /** 核心内容安全矩形：标题、排名数字、区域名、图例等必须落在这里。 */
+  /* 以下全是从四个分区派生的几何量，不是分区，也不进配置与预览。 */
+  /** 中间核心内容区：标题、排名数字、区域名、图例、浮动标签都必须落在这里。 */
   coreRect: SafeRect;
-  /** 浮动标签允许区 = coreRect 内缩 `contentGapPx`。 */
+  /**
+   * 浮动标签允许区。**已并入 `coreRect`**（2026-11-07 简化）：不再单独内缩
+   * `contentGapPx`，字段保留只为兼容既有调用方，值恒等于 `coreRect`。
+   */
   labelRect: SafeRect;
   /** 右侧互动栏禁入区（画布坐标）。 */
   interactiveRect: SafeRect | null;
@@ -144,10 +164,7 @@ export type SafeAreaResolution = {
   bottomBandRect: SafeRect;
   leftBandRect: SafeRect;
   rightBandRect: SafeRect;
-  /**
-   * 地图**底图**允许范围：横向可以延伸到画布边缘（底图允许被裁），
-   * 纵向避开顶部与底部 UI —— 排名区域不会被平台 UI 压住。
-   */
+  /** 排名府外接矩形的取景目标。**恒等于 `coreRect`**：四分区只有一个矩形。 */
   mapRect: SafeRect;
   warnings: string[];
 };
@@ -160,7 +177,7 @@ export type SafeAreaResolution = {
  * 配置缺失或非法时的安全兜底。数值刻意与随包配置一致，保证"没有配置文件"
  * 时仍然是一个可用的、保守的初始布局。
  */
-export const SAFE_AREA_CONFIG_VERSION = "2026-10-24.1";
+export const SAFE_AREA_CONFIG_VERSION = "2026-11-07.4";
 
 export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
   version: SAFE_AREA_CONFIG_VERSION,
@@ -177,14 +194,11 @@ export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
       id: "tiktok",
       label: "TikTok",
       verified: false,
-      // 自然流信息流里文案永远只显示折叠的 1~2 行（约 300~340px 实测占位），
-      // 展开是观众主动点击的临时态，不算安全区。400 = 340 + 60 余量。
-      margins: {top: 240, bottom: 400, left: 72, right: 180},
-      bottomByTier: {short: 400, medium: 400, long: 400},
-      interactiveKeepOut: {x: 900, y: 650, width: 180, height: 930},
-      // 底图各吃进上/下预留带的 60%：泰国形状特别瘦高，等比缩放下高度先顶满，
-      // 不让底图纵向出血的话两侧会各空出约 220px（画面宽度的 21%）。
-      mapBleed: {top: 144, bottom: 288},
+      // 2026-11-07.4 起 TikTok 默认四边预留：上 100 / 下 150 / 左 10 / 右 10，
+      // 三档描述统一压平为 150px。均为工程初始估值，不是平台官方规范。
+      margins: {top: 100, bottom: 150, left: 10, right: 10},
+      bottomByTier: {short: 150, medium: 150, long: 150},
+      interactiveKeepOut: {x: 1070, y: 650, width: 10, height: 930},
     },
     douyin: {
       id: "douyin",
@@ -193,7 +207,6 @@ export const DEFAULT_SAFE_AREA_CONFIG: ResolvedSafeAreaConfig = {
       margins: {top: 240, bottom: 480, left: 72, right: 180},
       bottomByTier: {short: 480, medium: 540, long: 600},
       interactiveKeepOut: {x: 900, y: 650, width: 180, height: 930},
-      mapBleed: {top: 144, bottom: 288},
     },
   },
 };
@@ -455,9 +468,14 @@ export const normalizeSafeAreaConfig = (
         margins: {...fallback.margins},
         bottomByTier: {...fallback.bottomByTier},
         interactiveKeepOut: fallback.interactiveKeepOut
-          ? {...fallback.interactiveKeepOut}
+          ? {
+              // 同下面显式配置的分支：横向由右边距推导，不抄写死的 x/width。
+              x: Math.max(0, canvas.width - fallback.margins.right),
+              width: Math.min(fallback.margins.right, canvas.width),
+              y: fallback.interactiveKeepOut.y,
+              height: fallback.interactiveKeepOut.height,
+            }
           : null,
-        mapBleed: {...fallback.mapBleed},
       };
       continue;
     }
@@ -468,20 +486,6 @@ export const normalizeSafeAreaConfig = (
       `platforms.${id}`,
       warnings,
     );
-    /* 底图纵向出血：只允许非负数，非法就回退默认值并告警。 */
-    const bleedInput = readObject(platformInput.mapBleed);
-    const readBleed = (key: "top" | "bottom"): number => {
-      const value = bleedInput[key];
-      if (value === undefined) return fallback.mapBleed[key];
-      if (!isFiniteNumber(value) || value < 0) {
-        warnings.push(
-          `platforms.${id}.mapBleed.${key} 必须是非负数（收到 ${String(value)}），已回退为 ${fallback.mapBleed[key]}`,
-        );
-        return fallback.mapBleed[key];
-      }
-      return value;
-    };
-    const mapBleed = {top: readBleed("top"), bottom: readBleed("bottom")};
     const bottomByTier: Partial<Record<DescriptionTierId, number>> = {};
     for (const tier of tiers) {
       const override = readObject(platformInput.bottomByTier)[tier.id];
@@ -494,6 +498,20 @@ export const normalizeSafeAreaConfig = (
         );
       }
     }
+    /*
+     * 互动栏的横向位置与宽度不再单独写死：它就是「画布右边距那一条」。
+     * 配置里只保留纵向范围（y / height），x 与 width 由 margins.right 推导，
+     * 避免同一个事实（右边 180px 是互动栏）在两处出现、改一处漏一处。
+     */
+    const keepOutBase = fallback.interactiveKeepOut;
+    const keepOutFallback: SafeKeepOut | null = keepOutBase
+      ? {
+          x: Math.max(0, canvas.width - margins.right),
+          width: Math.min(margins.right, canvas.width),
+          y: keepOutBase.y,
+          height: keepOutBase.height,
+        }
+      : null;
     platforms[id] = {
       id,
       label:
@@ -505,11 +523,10 @@ export const normalizeSafeAreaConfig = (
       bottomByTier,
       interactiveKeepOut: readKeepOut(
         platformInput.interactiveKeepOut,
-        fallback.interactiveKeepOut,
+        keepOutFallback,
         `platforms.${id}`,
         warnings,
       ),
-      mapBleed,
     };
   }
 
@@ -570,6 +587,42 @@ export const selectDescriptionTier = (
 /* -------------------------------------------------------------------------- *
  * resolveSafeArea
  * -------------------------------------------------------------------------- */
+
+/**
+ * 读取请求级的四分区边界覆盖（唯一一组可调参数）。
+ *
+ * 只有非负有限数才接受；非法值逐条告警并忽略该边，绝不让坏值生出坏布局。
+ * 返回 `null` 表示这次请求没有手动调整 —— 四边全部按平台配置 + 描述分档派生。
+ */
+const readCoreMarginOverrides = (
+  raw: unknown,
+  warnings: string[],
+): Partial<SafeMargins> | null => {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    warnings.push("coreMargins 必须是 {top,bottom,left,right} 对象，已忽略");
+    return null;
+  }
+  const input = readObject(raw);
+  const overrides: Partial<SafeMargins> = {};
+  let count = 0;
+  (["top", "bottom", "left", "right"] as const).forEach((side) => {
+    const value = input[side];
+    if (value === undefined || value === null || value === "") return;
+    if (typeof value !== "number" && typeof value !== "string") {
+      warnings.push(`coreMargins.${side} 必须是非负数（收到 ${String(value)}），已忽略`);
+      return;
+    }
+    const num = typeof value === "number" ? value : Number(value);
+    if (!isFiniteNumber(num) || num < 0) {
+      warnings.push(`coreMargins.${side} 必须是非负数（收到 ${String(value)}），已忽略`);
+      return;
+    }
+    overrides[side] = num;
+    count += 1;
+  });
+  return count ? overrides : null;
+};
 
 const bandRects = (
   canvas: SafeCanvas,
@@ -641,6 +694,18 @@ export const resolveSafeArea = (
     right: platformConfig.margins.right,
   };
 
+  // 四个分区的四条边界 = 唯一一组可调参数，也是唯一一个矩形（核心框）的四边。
+  // 覆盖放在描述分档之后：手动值优先于 tier 的 bottomPx，不会出现「调了下边
+  // 却被描述等级改回去」。预览与成片把同一组值送给同一个 resolveSafeArea，
+  // 所以核心框、取景矩形、四条压暗带、互动栏横向永远来自同一套来源。
+  const coreMarginOverrides = readCoreMarginOverrides(request.coreMargins, warnings);
+  if (coreMarginOverrides) {
+    (["top", "bottom", "left", "right"] as const).forEach((side) => {
+      const value = coreMarginOverrides[side];
+      if (value !== undefined) margins[side] = value;
+    });
+  }
+
   // 预留不能把画面吃光：任何一边超过画布的 45% 都收敛并报警。
   const limitY = Math.floor(canvas.height * 0.45);
   const limitX = Math.floor(canvas.width * 0.45);
@@ -662,7 +727,18 @@ export const resolveSafeArea = (
   });
 
   /* 右侧互动栏禁入区先算出来：核心安全区要按它 + 额外间距收敛。 */
-  const rawKeepOut = platformConfig.interactiveKeepOut;
+  const configuredKeepOut = platformConfig.interactiveKeepOut;
+  // 右侧互动栏是四个分区之一，横向范围恒等于「右边距那一条」。手动调过右边距
+  // 时它必须跟着走，否则核心框右边界仍会被配置里固化的旧 x/width 收敛，出现
+  // 「调了右边却没反应」。未手动调整时保持配置原样（含旧配置显式 x/width）。
+  const rawKeepOut =
+    configuredKeepOut && coreMarginOverrides?.right !== undefined
+      ? {
+          ...configuredKeepOut,
+          x: Math.max(0, canvas.width - margins.right),
+          width: Math.min(margins.right, canvas.width),
+        }
+      : configuredKeepOut;
   let interactiveRect: SafeRect | null = null;
   let interactiveGapRect: SafeRect | null = null;
   if (rawKeepOut) {
@@ -735,11 +811,10 @@ export const resolveSafeArea = (
     margins.right = fallbackLeft;
   }
 
-  const labelRect = insetRect(coreRect, config.contentGapPx);
-  if (rectWidth(labelRect) <= 0 || rectHeight(labelRect) <= 0) {
-    warnings.push("标签安全区被 contentGapPx 压空，已回退为未内缩的核心安全区");
-  }
-  const safeLabelRect = rectWidth(labelRect) > 0 && rectHeight(labelRect) > 0 ? labelRect : coreRect;
+  // 浮动标签直接以核心安全区为边界。以前这里会再内缩 contentGapPx 形成一个
+  // 独立的「标签安全区」，比核心区小 5px —— 5px 肉眼看不出来，却多了一条
+  // 调试虚线、一处校准参数和一条审计分支，已于 2026-11-07 合并。
+  const labelRect: SafeRect = {...coreRect};
 
   return {
     version: config.version,
@@ -749,6 +824,7 @@ export const resolveSafeArea = (
     verified: platformConfig.verified,
     canvas,
     margins,
+    coreMarginsApplied: coreMarginOverrides !== null,
     bottomSource,
     contentGapPx: config.contentGapPx,
     descriptionTier: tier.id,
@@ -757,20 +833,15 @@ export const resolveSafeArea = (
     tierRule: {id: tier.id, tier: tier.tier, maxChars: tier.maxChars, bottomPx: tier.bottomPx},
     tiers: config.tiers.map((rule) => ({...rule})),
     coreRect,
-    labelRect: safeLabelRect,
+    labelRect,
     interactiveRect,
     interactiveGapRect,
     ...bandRects(canvas, coreRect, margins),
-    mapRect: {
-      // 底图可以延伸至画布边缘（横向只有很小的出血安全边），纵向除了避开
-      // 顶部与底部 UI 之外，还允许按 mapBleed 吃进预留带的一部分 —— 底图只是
-      // 垫底层，标题/标签的避让由 coreRect / labelRect 保证。纵向可用的空间
-      // 变大后，等比缩放下的地图会整体变大，两侧留白明显收窄。
-      x0: 24,
-      y0: Math.max(0, margins.top - platformConfig.mapBleed.top),
-      x1: canvas.width - 24,
-      y1: Math.min(canvas.height, canvas.height - margins.bottom + platformConfig.mapBleed.bottom),
-    },
+    // 2026-11-07 合并：取景矩形 = 中间核心区。原本 mapRect 比 coreRect 大一圈
+    // （靠底图出血参数吃进上/下预留带把瘦高的泰国地图撑宽），于是预览里出现
+    // 「文字边界」与「地图形状边界」两个框。现在四分区就是唯一事实：排名府
+    // 与文字都装进同一个矩形，页面只画一个框，底图出血参数随之删除。
+    mapRect: {...coreRect},
     warnings,
   };
 };
@@ -1017,17 +1088,18 @@ const rectLine = (label: string, rect: SafeRect): string =>
 /** 人类可读的安全区摘要，直接进生成日志与 UI。 */
 export const describeSafeArea = (resolution: SafeAreaResolution): string[] => {
   const lines = [
+    `分区：顶部导航 / 右侧互动栏 / 底部账号ID与描述 / 中间核心内容（其余矩形均由这四区派生）`,
     `平台 ${resolution.platformLabel}（${resolution.platform}）· 安全区配置版本 ${resolution.version} · ` +
-      `参数来源：工程初始估值${resolution.verified ? "" : "（尚未用真机截图校准）"}`,
+      `参数来源：${resolution.coreMarginsApplied ? "请求手动调整四分区边界" : "工程初始估值"}${
+        resolution.verified ? "" : "（尚未用真机截图校准）"
+      }`,
     `发布描述 ${resolution.descriptionChars} 字符 → 等级 ${resolution.descriptionTier}` +
       (resolution.tierRule.maxChars === null
         ? "（无上限档）"
         : `（≤ ${resolution.tierRule.maxChars} 字符）`) +
       ` · 底部预留 ${resolution.margins.bottom}px（来自${resolution.bottomSource === "platform" ? "平台覆盖" : "等级配置"}）`,
-    `四边预留：上 ${resolution.margins.top} / 下 ${resolution.margins.bottom} / 左 ${resolution.margins.left} / 右 ${resolution.margins.right}（间距 ${resolution.contentGapPx}px）`,
-    rectLine("核心安全区", resolution.coreRect),
-    rectLine("标签安全区", resolution.labelRect),
-    rectLine("地图底图可用区", resolution.mapRect),
+    `四边预留（核心框四条边）：上 ${resolution.margins.top} / 下 ${resolution.margins.bottom} / 左 ${resolution.margins.left} / 右 ${resolution.margins.right}（间距 ${resolution.contentGapPx}px）${resolution.coreMarginsApplied ? " · 手动调整" : ""}`,
+    rectLine("核心安全区（也是取景矩形）", resolution.coreRect),
   ];
   if (resolution.interactiveRect) {
     lines.push(

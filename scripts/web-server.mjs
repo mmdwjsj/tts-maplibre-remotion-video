@@ -169,7 +169,7 @@ try {
   labelPlacementModule = await import("../src/video/layout/labelPlacement.ts");
 } catch (error) {
   console.warn(
-    `[safe-area] 无法加载标签落位模块，标签安全区审计不可用：${error.message}`,
+    `[safe-area] 无法加载标签落位模块，标签落位审计不可用：${error.message}`,
   );
 }
 
@@ -296,6 +296,9 @@ const resolveSafeAreaFor = (body, { silent = false } = {}) => {
   const resolution = safeAreaModule.resolveSafeArea(safeAreaConfig, {
     platform: body?.platform,
     description: body?.publishDescription,
+    // 四个分区的四条边界 = 唯一一组可调参数（核心框四边）。预览与成片把同一组
+    // 值送进同一个 resolveSafeArea，所以只有一个矩形、只有一套来源。
+    coreMargins: body?.coreMargins,
   });
   // The preview endpoint re-resolves while the user types; only the generation
   // path writes the log, so nothing is spammed and nothing is swallowed either.
@@ -309,6 +312,19 @@ const resolveSafeAreaFor = (body, { silent = false } = {}) => {
     );
   return resolution;
 };
+
+/**
+ * 取景基准没有独立入口（2026-11-07 合并）：`mapRect` 恒等于四分区的
+ * `coreRect`。四分区的四条边界就是唯一一组可调参数 `body.coreMargins`
+ * （上 / 下 / 左 / 右 = 核心框四条边距屏幕四边的像素），由
+ * `resolveSafeAreaFor` 透传给 `resolveSafeArea` 一次派生。
+ *
+ * 历史上这里先后有两套覆盖参数：地图取景预览里的四个相对位移滑块、发布设置
+ * 里的四边间距输入框，叠加出一个比核心区大一圈的取景矩形，预览里因此出现
+ * 「文字边界」与「地图形状边界」两个框。那两条链路都已删除。现在只剩一组
+ * 绝对边界值：`/api/framing/preview` 与 `/api/generate` 都经过本函数，
+ * 预览响应也原样回传这份 safeArea，页面只画核心区那一个框。
+ */
 
 /**
  * Audits where every floating rank label would land, plus the fixed headline
@@ -355,8 +371,13 @@ const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
     }
   }
 
-  // The fixed headline blocks: their rects mirror the styles the render applies
-  // (header pinned to the top of the core rect, footer just inside its bottom).
+  // The fixed headline blocks: their rects mirror the styles the render applies.
+  // The title owns no band any more — it is an overlay whose centre sits one
+  // third of the way down the core rect, about 110px tall, and it fades out with
+  // the opening line. The footer sits just inside the core rect's bottom edge.
+  const titleCenterY =
+    resolution.coreRect.y0 +
+    (resolution.coreRect.y1 - resolution.coreRect.y0) / 3;
   elements.push(
     {
       id: "header:title",
@@ -364,9 +385,9 @@ const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
       kind: "text",
       rect: {
         x0: resolution.coreRect.x0,
-        y0: resolution.coreRect.y0 + 24,
+        y0: titleCenterY - 55,
         x1: resolution.coreRect.x1,
-        y1: resolution.coreRect.y0 + 24 + 110,
+        y1: titleCenterY + 55,
       },
     },
     {
@@ -724,6 +745,8 @@ const server = http.createServer(async (req, res) => {
       }
       const body = await readBody(req);
       const { options } = framingModule.normalizeFramingOptions(body.framing);
+      // 取景矩形由四分区直接派生（mapRect === coreRect）：这份 safeArea 既
+      // 参与取景计算，也原样回给前端 —— 面板读数与遮罩都用它。
       const safeArea = resolveSafeAreaFor(body, { silent: true });
       const viewport = framingModule.resolveViewport(
         provinceGeoJson,
@@ -827,6 +850,8 @@ const server = http.createServer(async (req, res) => {
       // The platform safe area is resolved first: it depends on the publish
       // description (a request field), not on anything the render computes, and
       // it feeds the static viewport below.
+      // 与 /api/framing/preview 用同一个派生函数：取景矩形就是核心区，
+      // MP4 与预览构图完全一致，没有可漂移的独立参数。
       const safeArea = resolveSafeAreaFor(body);
 
       // The static viewport is resolved once, from the complete ranking set and
@@ -1221,6 +1246,9 @@ const server = http.createServer(async (req, res) => {
   }
   res.writeHead(200, {
     "Content-Type": mime[path.extname(file)] ?? "application/octet-stream",
+    // 开发页禁缓存：页面/脚本改动后普通刷新立即生效，避免浏览器沿用
+    // 旧版 index.html（旧请求体缺字段会导致新控件"改了没反应"）。
+    "Cache-Control": "no-store",
   });
   fs.createReadStream(file).pipe(res);
 });

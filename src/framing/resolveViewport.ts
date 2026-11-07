@@ -36,10 +36,15 @@ export type FramingRect = {x0: number; y0: number; x1: number; y1: number};
 export const MAP_STAGE: FramingStage = {width: 1080, height: 1920};
 
 /**
- * Screen bands the title header (top) and the footer (bottom) occupy. Both are
- * doubly meaningful: they are the floor/ceiling the *map itself* respects, and
- * they keep floating rank labels clear of the overlays. The render paints a
- * gradient scrim over both bands for the same reason.
+ * Legacy fallback bands, used **only** when no platform safe area is supplied
+ * (`resolveViewport` without `safeArea`: the CLI and older render props). With a
+ * resolved safe area — which is every job the web server runs — framing follows
+ * `coreRect` instead and these numbers are never consulted.
+ *
+ * They are not overlay bands any more: the title is an intro card drawn straight
+ * over the framing rect with no scrim and no reserved strip, and the footer
+ * carries no text. What remains is the floor/ceiling the *map itself* respects
+ * in the fallback path, plus the clamp for floating rank labels.
  *
  * `bottom` is deliberately generous: on a phone the caption and the app's own
  * controls sit over the lower part of the frame and would bury a province or a
@@ -76,22 +81,21 @@ export const labelRectFor = (stage: FramingStage): FramingRect => ({
  * preview and the render all load the same file), and the safe-area module owns
  * every rule about margins, description tiers and the interactive keep-out.
  *
- * - `mapRect`   the area the *base map* is fitted into. The base map may run to
- *               the canvas edge horizontally, but it stops above the platform's
- *               bottom caption/description area so a ranked province is never
- *               buried under it.
- * - `labelRect` the area floating labels may occupy. Titles, rank numbers,
- *               province names and legend text all live inside it, away from
- *               the status bar, the right-hand action rail and the caption.
+ * - `mapRect`   the rect the ranked provinces are fitted into. Since
+ *               2026-11-07 it is **the platform's core content rect**: provinces
+ *               and text share one rectangle, so the preview draws only one box.
+ * - `labelRect` the area floating labels may occupy. Equals the core rect too —
+ *               titles, rank numbers and legend text stay away from the status
+ *               bar, the right-hand action rail and the caption.
  */
 export type FramingSafeArea = {
   /**
-   * The rect the ranked provinces must be **fully** fitted into. This is the
-   * platform's core content area (`coreRect`), not the bleed rect: a province
-   * whose shape leaks under the status bar or the caption is not "visible".
+   * The rect the ranked provinces must be **fully** fitted into. This project
+   * passes the core rect, so the MP4 and the web preview resolve to identical
+   * framing. The old "base map bleeds into the reserved bands" rect is gone.
    *
-   * When omitted, `mapRect` is used (the old behaviour, which let the base map
-   * bleed into the reserved bands).
+   * When omitted, `mapRect` is used. Callers without any safe area fall back
+   * to the built-in framing bands.
    */
   fitRect?: FramingRect;
   mapRect?: FramingRect;
@@ -109,8 +113,8 @@ export type FramingSafeArea = {
 const MIN_RECT_SIZE = 80;
 const WEB_MERCATOR_TILE_SIZE = 256;
 const DEFAULT_CENTER: [number, number] = [100.5, 15];
-/** 排名府中心对齐安全区中心后，再整体向右偏移的像素（右侧互动栏让画面重心偏左，用它补偿）。 */
-const SUBJECT_CENTER_OFFSET_X = 20;
+/** 排名府中心对齐安全区中心后，再整体向右偏移的像素。默认 0 = 严格居中不偏移。 */
+const SUBJECT_CENTER_OFFSET_X = 0;
 
 /* -------------------------------------------------------------------------- *
  * Options
@@ -758,10 +762,9 @@ const normalizeStage = (
 /**
  * Authored rect (no preset padding): the full canvas minus the edge safety.
  *
- * When a platform safe area is supplied, its `mapRect` replaces the built-in
- * bands — the map is fitted into the room the app's own UI leaves free. Width
- * is still allowed to run to the canvas edge (a base map may be cropped), while
- * top/bottom follow the platform's status bar and caption area.
+ * When a platform safe area is supplied, its `mapRect` (the core content rect)
+ * replaces the built-in bands — the map is fitted into the room the app's own
+ * UI leaves free, with no bleed into the status bar or caption area.
  */
 const authorRect = (stage: FramingStage, override?: FramingRect): FramingRect => {
   if (override) {
@@ -1086,10 +1089,9 @@ export const resolveViewport = (
   const cached = cacheable ? bucket?.get(key) : undefined;
   if (cached) return cached;
 
-  // The ranked provinces are fitted into the platform's **core content area**
-  // when one is supplied: a province whose shape runs under the status bar or
-  // the caption is not actually readable. Falling back to `mapRect` keeps the
-  // old bleed behaviour for callers that do not pass a safe area.
+  // The ranked provinces and all text are fitted into the same rect: the
+  // platform's core content area (`fitRect` / `mapRect` are both that rect).
+  // Callers without a safe area keep the built-in framing bands unchanged.
   const authoredRect = authorRect(safeStage, safe?.fitRect ?? safe?.mapRect);
   const rect = insetRect(authoredRect, options.padding, warnings);
   // Everything below fits against `fitRect`, which is `rect` stretched

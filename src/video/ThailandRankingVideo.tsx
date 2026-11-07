@@ -33,15 +33,15 @@ const DESIGN_HEIGHT = 1920;
 
 // The map is the bottom layer and fills the entire canvas — `MAP_STAGE` is the
 // container size in SVG user units, so the resolved viewport is always computed
-// against the real container. Header and footer float above it; the header scrim
-// keeps the title readable where a province or a leader line runs underneath.
-// It is painted in the *sea* colour (not black): the palette is a light one —
-// bright blue water, near-white land — so the header band reads as more water
-// rather than as a dark bar, and the dark ink title keeps its contrast either
-// way. There is deliberately **no footer scrim**: the footer carries no text, so
-// a bottom gradient would only paint a band of deeper blue over the map.
-const HEADER_SCRIM =
-  "linear-gradient(180deg, rgba(47,169,225,0.96) 0%, rgba(47,169,225,0.9) 30%, rgba(47,169,225,0.5) 62%, rgba(47,169,225,0) 100%)";
+// against the real container. Header and footer float above it.
+//
+// The title deliberately owns **no band of its own**: it is an intro card that
+// fades out with the opening line, so reserving a strip at the top of the framing
+// rect wastes a fifth of the picture for two seconds. It sits directly on the map
+// with its centre one third of the way down the framing rect, and stays legible
+// on its own — dark ink on bright water or white land. No scrim either: a
+// gradient band would read as a separate zone, which is exactly what this layout
+// avoids. The footer carries no text, so it has none for the same reason.
 
 /** Frames the title takes to fade away once the opening line has been spoken. */
 const TITLE_FADE_FRAMES = 9;
@@ -109,12 +109,14 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
     const core = toDesignRect(safeArea.coreRect, canvas);
     return {
       core,
-      label: toDesignRect(safeArea.labelRect, canvas),
-      map: toDesignRect(safeArea.mapRect, canvas),
+      // 四个分区只有一套边界：浮动标签直接用中间核心区（2026-11-07 合并，
+      // 不再单独内缩 5px，也不再有「标签安全带 / 内框」这个分区）。
+      label: core,
       keepOut: safeArea.interactiveGapRect
         ? toDesignRect(safeArea.interactiveGapRect, canvas)
         : null,
-      topMargin: safeArea.margins.top * sy,
+      // 标题不再占用任何一条带（见文件顶部注释），所以这里没有 topMargin：
+      // 核心区以上的屏幕像素只有平台安全区本身，渲染端不需要再读它。
       bottomMargin: safeArea.margins.bottom * sy,
       rightMargin: DESIGN_WIDTH - core.x1,
     };
@@ -127,11 +129,12 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   // per-frame movement, so the camera is just as stable as before.
   const framingStage = useMemo(
     () => ({
-      // Provinces are fitted into the *core content area*, so a province can
-      // never end up under the platform's status bar or caption. `mapRect`
-      // still travels along for callers that want the bleed rect.
+      // 2026-11-07 合并：排名府与文字共用中间核心区这一个矩形，页面不再有
+      // 「文字边界 / 地图形状边界」两个框。预览端用同一份 safeArea 解析，
+      // MP4 与预览构图一致。原先取景矩形靠底图出血参数比核心区大一圈、
+      // 把瘦高的地图撑宽；现在收进核心区，地图略窄、两侧留白变多。
       fitRect: design.core,
-      mapRect: design.map,
+      mapRect: design.core,
       labelRect: design.label,
       keepOutRect: design.keepOut,
     }),
@@ -265,34 +268,20 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             framing={framing}
           />
         </div>
-        {/* Scrim that keeps the header text readable when a province or a leader
-            line runs underneath. It follows the safe-area top margin, so it
-            covers exactly the band the platform status bar occupies. The bottom
-            band has no scrim: the footer carries no text and the map runs to the
-            canvas edge. */}
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: design.topMargin + 180,
-            background: HEADER_SCRIM,
-            opacity: titleOpacity,
-            pointerEvents: "none",
-          }}
-        />
-        {/* Every headline is anchored to the safe rectangle: below the status
-            bar, left of the right-hand action rail and above the caption. */}
+        {/* The headline is an overlay, not a zone: its centre sits one third of
+            the way down the framing rect, it spans that rect's full width, and it
+            simply fades out with the opening line. Nothing is reserved for it —
+            no top band, no scrim — so the map keeps the whole framing rect
+            before, during and after the title. */}
         <header
           style={{
             position: "absolute",
-            top: design.core.y0 + 24,
-            left: 48,
-            right: 48,
+            top: design.core.y0 + (design.core.y1 - design.core.y0) / 3,
+            left: design.core.x0 + 32,
+            right: DESIGN_WIDTH - design.core.x1 + 32,
             textAlign: "center",
             opacity: intro * titleOpacity,
-            transform: `translateY(${(1 - intro) * 18 - (1 - titleOpacity) * 16}px)`,
+            transform: `translateY(calc(-50% + ${(1 - intro) * 18 - (1 - titleOpacity) * 16}px))`,
           }}
         >
           {/* <div style={{ fontSize: 22, letterSpacing: 7, color: theme.accent }}>
@@ -302,7 +291,7 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
             style={{
               fontSize: titleFontSize,
               lineHeight: 1.15,
-              margin: "18px 0 8px",
+              margin: "0 0 8px",
               letterSpacing: 1,
               overflowWrap: "anywhere",
               textAlign: "center",

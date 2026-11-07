@@ -1,15 +1,19 @@
 {
-  "version": "2026-10-24.1",
+  "version": "2026-11-07.4",
   "provenance": "initial-estimate",
   "note": [
+    "本配置只定义四个分区：顶部导航 / 右侧互动栏 / 底部账号ID与描述 / 中间核心内容。coreRect 是中间核心区，也是排名府与文字共用的唯一取景矩形；labelRect、mapRect、interactiveRect、interactiveGapRect 与四条预留带都只是从这四个分区派生的几何量，不是分区，也不画成预览里的第二个框。",
+    "排名府的取景目标就是中间核心区：mapRect 恒等于 coreRect（2026-11-07 合并），原先靠底图出血参数把地图放大进预留带的做法已删除。标题、图例、页脚、浮动标签与排名府共用这一个矩形。见 src/video/ThailandRankingVideo.tsx 的 framingStage.fitRect。",
+    "右侧互动栏的横向范围由 margins.right 推导，配置里只写纵向范围（y / height），避免同一个事实写两遍。",
+    "四个分区的四条边界就是唯一一组可调参数：请求级 coreMargins {top,bottom,left,right} = 核心框四条边距屏幕四边的像素。网页预览图右侧上/下/左/右各一行，预览与 /api/generate 把同一组值送给同一个 resolveSafeArea，所以只有一个矩形、只有一套来源。不传时按本配置的平台参数 + 发布描述分档派生；手动调过右边距时，右侧互动栏横向同步跟随，不会出现调了没反应。",
+    "contentGapPx 是重要内容与分区边界之间的最小间距，不是新的分区。verticalSquash 是投影层把瘦高的泰国地图横向撑开的参数，与取景矩形无关，仍保留。",
     "以上/以下所有像素值都是【工程初始估值】，不是 TikTok 或抖音的官方统一像素规范。",
-    "TikTok 底部预留压平为 400px：自然流信息流文案只显示折叠的 1~2 行（实测占位约 300~340px），展开是观众点击后的临时态，不计入安全区。抖音未实测，仍保留按文案长度分档。",
+    "默认四边预留（2026-11-07.4 调整，TikTok）：上 100 / 下 150 / 左 10 / 右 10，三档描述统一压平为 150px，不再随文案长度变化。抖音未实测，仍保留按文案长度分档（480 / 540 / 600）。",
     "TikTok 的广告规范不能等同于普通自然流视频的规范；TikTok 的参数也不能当作抖音的规范。",
     "换机型、换客户端版本、换系统（含底部手势条）后，这些值都要按真实手机截图重新校准。",
     "校准完成后把对应平台的 verified 改成 true，日志里就会去掉“尚未用真机截图校准”提示。",
     "坐标系：以 1080x1920 设计画布为基准，原点在左上角，单位像素。",
-    "画布尺寸可改，但正式输出仍是 1080x1920（见 src/Root.tsx）。",
-    "mapBleed 只影响【底图可用区】（预览里的橙色虚线框）：海面与未排名府可以按它吃进上/下预留带。排名府的取景目标固定是核心安全区 coreRect，不再使用 mapRect；地图宽度靠 framing.verticalSquash（默认 12%）纵向压扁补偿，压 19% 时宽度顶满安全区。"
+    "画布尺寸可改，但正式输出仍是 1080x1920（见 src/Root.tsx）。"
   ],
   "canvas": { "width": 1080, "height": 1920 },
   "defaultPlatform": "tiktok",
@@ -23,18 +27,16 @@
     "tiktok": {
       "label": "TikTok",
       "verified": false,
-      "margins": { "top": 240, "bottom": 400, "left": 72, "right": 180 },
-      "bottomByTier": { "short": 400, "medium": 400, "long": 400 },
-      "interactiveKeepOut": { "x": 900, "y": 650, "width": 180, "height": 930 },
-      "mapBleed": { "top": 72, "bottom": 288 }
+      "margins": { "top": 100, "bottom": 150, "left": 10, "right": 10 },
+      "bottomByTier": { "short": 150, "medium": 150, "long": 150 },
+      "interactiveKeepOut": { "y": 650, "height": 930 }
     },
     "douyin": {
       "label": "抖音",
       "verified": false,
       "margins": { "top": 240, "bottom": 480, "left": 72, "right": 180 },
       "bottomByTier": { "short": 480, "medium": 540, "long": 600 },
-      "interactiveKeepOut": { "x": 900, "y": 650, "width": 180, "height": 930 },
-      "mapBleed": { "top": 144, "bottom": 288 }
+      "interactiveKeepOut": { "y": 650, "height": 930 }
     }
   }
 }

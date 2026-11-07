@@ -21,6 +21,7 @@ import {fileURLToPath} from 'node:url';
 
 import {
   DEFAULT_SAFE_AREA_CONFIG,
+  SAFE_AREA_CONFIG_VERSION,
   auditSafeAreaLayout,
   checkBounds,
   checkKeepOut,
@@ -53,11 +54,11 @@ const geojson = JSON.parse(
 
 const EAST = ['TH-10', 'TH-11', 'TH-13', 'TH-20', 'TH-21', 'TH-22', 'TH-23'];
 
-/** 描述样例：字符数 -> 等级。TikTok 底部压平为 400（折叠态），抖音仍按文案分档。 */
+/** 描述样例：字符数 -> 等级。TikTok 三档统一 150px，抖音仍按文案分档。 */
 const TIER_CASES = [
-  ['short', 20, {tiktok: 400, douyin: 480}],
-  ['medium', 120, {tiktok: 400, douyin: 540}],
-  ['long', 260, {tiktok: 400, douyin: 600}],
+  ['short', 20, {tiktok: 150, douyin: 480}],
+  ['medium', 120, {tiktok: 150, douyin: 540}],
+  ['long', 260, {tiktok: 150, douyin: 600}],
 ];
 
 const PLATFORMS = ['tiktok', 'douyin'];
@@ -115,21 +116,11 @@ for (const platform of PLATFORMS) {
           '核心安全区不应与禁入区（含间距）相交',
         );
       }
-      // 标签安全区 = 核心安全区再内缩 contentGapPx。
-      assert.equal(resolution.labelRect.x0, resolution.coreRect.x0 + resolution.contentGapPx);
-      assert.equal(resolution.labelRect.y1, resolution.coreRect.y1 - resolution.contentGapPx);
-      // 地图底图横向铺到画布边缘附近；纵向按 mapBleed 吃进上/下预留带，
-      // 但永远不会超出画布。
-      assert.ok(resolution.mapRect.x0 < resolution.margins.left);
-      const bleed = config.platforms[platform].mapBleed;
-      assert.equal(resolution.mapRect.y0, Math.max(0, resolution.margins.top - bleed.top));
-      assert.equal(
-        resolution.mapRect.y1,
-        Math.min(resolution.canvas.height, resolution.canvas.height - bottom + bleed.bottom),
-      );
-      // 底图出血只影响底图：核心区 / 标签区 / 预留带都不跟着动。
-      assert.ok(resolution.mapRect.y0 < resolution.coreRect.y0);
-      assert.ok(resolution.mapRect.y1 > resolution.coreRect.y1);
+      // 标签区已并入核心区（2026-11-07 简化）：不再有单独的「内框 / 标签安全带」。
+      assert.deepEqual(resolution.labelRect, resolution.coreRect);
+      // 取景矩形已合并进核心区（2026-11-07）：地图与文字共用一条边界，
+      // 页面不再出现第二个框。
+      assert.deepEqual(resolution.mapRect, resolution.coreRect);
       // 参数来源标注清楚，且没有把估值当成官方规范。
       assert.equal(resolution.provenance, 'initial-estimate');
       assert.equal(resolution.version, config.version);
@@ -328,7 +319,7 @@ test('场景：描述缺失时回退到 short 档并给出警告', () => {
   const empty = resolveSafeArea(config, {platform: 'tiktok', description: ''});
   assert.equal(empty.descriptionTier, 'short');
   assert.equal(empty.descriptionChars, 0);
-  assert.equal(empty.margins.bottom, 400);
+  assert.equal(empty.margins.bottom, 150);
   assert.ok(empty.warnings.some((warning) => warning.includes('发布描述缺失')));
 
   const missing = resolveSafeArea(config, {});
@@ -379,7 +370,7 @@ test('场景：异常配置回退到安全默认值并逐条告警', () => {
   const resolution = resolveSafeArea(broken, {platform: 'weibo', description: 'x'.repeat(10)});
   assert.equal(resolution.platform, 'tiktok');
   assert.ok(resolution.warnings.some((warning) => warning.includes('平台取值非法')));
-  // 负的 top 回退成默认 240，而不是把安全区压成负数。
+  // 负的 top 回退成内置默认值，而不是把安全区压成负数。
   assert.equal(resolution.margins.top, DEFAULT_SAFE_AREA_CONFIG.platforms.tiktok.margins.top);
   assert.ok(resolution.coreRect.y1 > resolution.coreRect.y0);
   assert.ok(resolution.labelRect.x1 > resolution.labelRect.x0);
@@ -417,12 +408,19 @@ test('越界检测给出方向、像素与所属组件', () => {
   };
   assert.equal(checkBounds(inside, resolution.coreRect), null);
 
-  const outside = {...inside, rect: {x0: 10, y0: 100, x1: 120, y1: 130}};
+  // 用当前生效的四边预留反推一个左上越界的元素，默认值再调也不会让断言失效。
+  const outside = {
+    ...inside,
+    rect: {x0: resolution.margins.left - 10, y0: resolution.margins.top - 60, x1: 120, y1: 130},
+  };
   const issue = checkBounds(outside, resolution.coreRect);
   assert.ok(issue);
   assert.equal(issue.code, 'OUT_OF_CORE');
   assert.deepEqual(issue.directions.sort(), ['left', 'top']);
-  assert.equal(issue.overflowPx, Math.max(72 - 10, 240 - 100));
+  assert.equal(
+    issue.overflowPx,
+    Math.max(resolution.margins.left - outside.rect.x0, resolution.margins.top - outside.rect.y0),
+  );
   assert.equal(issue.elementId, 'label:TH-10');
   assert.equal(issue.component, 'ThailandMap/placeLabel');
   assert.ok(issue.detail.includes('TH-10'));
@@ -430,11 +428,19 @@ test('越界检测给出方向、像素与所属组件', () => {
 
 test('右侧互动栏禁入区检测只约束重要内容，不约束地图底图', () => {
   const resolution = resolveSafeArea(config, {description: 'x'.repeat(10)});
+  const gapRect = resolution.interactiveGapRect;
+  // 贴着当前生效的禁入区放标签，右边距默认值再调也能命中。
+  const conflictRect = {
+    x0: gapRect.x0 + 1,
+    y0: 700,
+    x1: Math.min(gapRect.x1, gapRect.x0 + 20),
+    y1: 800,
+  };
   const conflict = {
     id: 'label:TH-10',
     component: 'ThailandMap/placeLabel',
     kind: 'panel',
-    rect: {x0: 950, y0: 700, x1: 1000, y1: 800},
+    rect: conflictRect,
   };
   const issue = checkKeepOut(conflict, resolution.interactiveGapRect);
   assert.ok(issue);
@@ -453,6 +459,14 @@ test('右侧互动栏禁入区检测只约束重要内容，不约束地图底�
 
 test('统一审计同时报告越界、禁入与标签重叠', () => {
   const resolution = resolveSafeArea(config, {description: 'x'.repeat(120)});
+  const gapRect = resolution.interactiveGapRect;
+  // 贴着当前生效的禁入区构造冲突，右边距默认值再调也能命中。
+  const keepOutConflict = {
+    x0: gapRect.x0 + 1,
+    y0: 700,
+    x1: Math.min(gapRect.x1, gapRect.x0 + 20),
+    y1: 800,
+  };
   const audit = auditSafeAreaLayout({
     resolution,
     elements: [
@@ -461,7 +475,7 @@ test('统一审计同时报告越界、禁入与标签重叠', () => {
         id: 'label:TH-10',
         component: 'ThailandMap/placeLabel',
         kind: 'panel',
-        rect: {x0: 940, y0: 700, x1: 1000, y1: 800},
+        rect: keepOutConflict,
       },
       {
         id: 'label:TH-11',
@@ -489,9 +503,12 @@ test('describeSafeArea 输出平台、等级、四边预留与矩形坐标', () 
   assert.ok(lines.includes('medium'));
   assert.ok(lines.includes('初始估值'));
   assert.ok(lines.includes('核心安全区'));
-  assert.ok(lines.includes('标签安全区'));
+  assert.ok(lines.includes('顶部导航'));
+  assert.ok(lines.includes('中间核心内容'));
   assert.ok(lines.includes('禁入区'));
   assert.ok(lines.includes('配置版本'));
+  // 简化后日志里不再把「标签安全带」当成一个独立分区。
+  assert.equal(lines.includes('标签安全区'), false);
 });
 
 /* -------------------------------------------------------------------------- *
@@ -517,7 +534,7 @@ test('平台配置互相隔离：改抖音不影响 TikTok，反之亦然', () =
 
   assert.deepEqual(tiktok.margins, config.platforms.tiktok.margins);
   assert.deepEqual(douyin.margins, {top: 320, bottom: 700, left: 96, right: 240});
-  assert.equal(tiktok.interactiveRect.x0, 900);
+  assert.equal(tiktok.interactiveRect.x0, tiktok.canvas.width - config.platforms.tiktok.margins.right);
   assert.equal(douyin.interactiveRect.x0, 840);
   // 两个平台各自独立解析，不会共享缓存出来的矩形对象。
   assert.notEqual(tiktok.coreRect, douyin.coreRect);
@@ -527,7 +544,7 @@ test('平台配置互相隔离：改抖音不影响 TikTok，反之亦然', () =
  * 接入取景 / 渲染
  * -------------------------------------------------------------------------- */
 
-test('安全区接入取景：地图底图可用区与标签安全区都按平台配置收敛', () => {
+test('安全区接入取景：取景基准与标签边界都按平台配置收敛', () => {
   const short = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(10)});
   const long = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(300)});
 
@@ -541,13 +558,12 @@ test('安全区接入取景：地图底图可用区与标签安全区都按平�
   const viewShort = viewOf(short);
   const viewLong = viewOf(long);
 
-  assert.equal(viewShort.mapRect.y1, Math.min(1920, 1920 - short.margins.bottom + config.platforms.tiktok.mapBleed.bottom));
-  assert.equal(viewShort.mapRect.y0, Math.max(0, short.margins.top - config.platforms.tiktok.mapBleed.top));
+  assert.deepEqual(viewShort.mapRect, short.coreRect);
   assert.equal(viewShort.labelRect.x1, short.labelRect.x1);
   assert.equal(viewShort.keepOutRect.x0, short.interactiveGapRect.x0);
-  // TikTok 底部压平为 400：三档预留等高，视野不再随描述长度变化。
-  assert.equal(short.margins.bottom, 400);
-  assert.equal(long.margins.bottom, 400);
+  // TikTok 三档统一 150px：预留等高，视野不再随描述长度变化。
+  assert.equal(short.margins.bottom, 150);
+  assert.equal(long.margins.bottom, 150);
   assert.equal(viewLong.rect.y1, viewShort.rect.y1);
   // 但排名区域仍然全部在画面内：安全区不会让内容消失。
   assert.equal(viewShort.coverage, 1);
@@ -555,73 +571,24 @@ test('安全区接入取景：地图底图可用区与标签安全区都按平�
   assert.equal(viewLong.coverage, 1);
 });
 
-test('mapBleed：底图纵向出血把地图撑大、收窄两侧留白，且不影响标题/标签安全区', () => {
-  const withBleed = resolveSafeArea(config, {platform: 'douyin', description: 'x'.repeat(10)});
-
-  // 把出血设为 0 → 回到"底图完全不进预留带"的保守布局。
-  const noBleedConfig = {
-    ...config,
-    version: 'bleed-0',
-    platforms: {
-      ...config.platforms,
-      douyin: {...config.platforms.douyin, mapBleed: {top: 0, bottom: 0}},
-    },
-  };
-  const noBleed = resolveSafeArea(noBleedConfig, {platform: 'douyin', description: 'x'.repeat(10)});
-
-  // 出血只动 mapRect：核心区 / 标签区 / 预留带保持不变。
-  assert.equal(noBleed.coreRect.y0, withBleed.coreRect.y0);
-  assert.equal(noBleed.coreRect.y1, withBleed.coreRect.y1);
-  assert.deepEqual(noBleed.labelRect, withBleed.labelRect);
-  assert.deepEqual(noBleed.margins, withBleed.margins);
-  assert.equal(noBleed.mapRect.y0, noBleed.margins.top);
-  assert.equal(noBleed.mapRect.y1, 1920 - noBleed.margins.bottom);
-  assert.ok(withBleed.mapRect.y0 < noBleed.mapRect.y0);
-  assert.ok(withBleed.mapRect.y1 > noBleed.mapRect.y1);
-
-  // 底图可用的纵向空间变大 → 取景比例尺变大（地图被撑大）。
-  // 注意：只有"高度先顶满"的数据（南北跨度大）才会受益；EAST 那种紧凑的
-  // 东部集群是宽度先顶满，出血对它没有影响 —— 所以这里用南北跨度大的组合。
-  const SPREAD = ['TH-10', 'TH-20', 'TH-50', 'TH-83', 'TH-21'];
-  const viewOf = (resolution, ids) =>
-    resolveViewport(geojson, ids ?? EAST, {}, MAP_STAGE, {
-      mapRect: resolution.mapRect,
-      labelRect: resolution.labelRect,
-      keepOutRect: resolution.interactiveGapRect,
-    });
-  const viewWith = viewOf(withBleed, SPREAD);
-  const viewWithout = viewOf(noBleed, SPREAD);
-  assert.ok(viewWith.scale > viewWithout.scale, '出血后底图比例尺应更大');
-  // 泰国形状瘦高、高度先顶满：比例尺变大后两侧留白收窄。
-  const widthOf = (viewport) => {
-    let x0 = Infinity;
-    let x1 = -Infinity;
-    for (const diagnostic of viewport.diagnostics) {
-      if (!viewport.keptIds.includes(diagnostic.provinceId)) continue;
-      const [cx] = diagnostic.center;
-      const half = diagnostic.sizePx[0] / 2;
-      if (!Number.isFinite(cx)) continue;
-      x0 = Math.min(x0, cx - half);
-      x1 = Math.max(x1, cx + half);
+test('取景矩形恒等于核心区：不同平台与描述档位都只有一个矩形', () => {
+  for (const platform of PLATFORMS) {
+    for (const chars of [10, 120, 300]) {
+      const resolution = resolveSafeArea(config, {platform, description: 'x'.repeat(chars)});
+      assert.deepEqual(resolution.mapRect, resolution.coreRect);
+      assert.deepEqual(resolution.labelRect, resolution.coreRect);
     }
-    return x1 - x0;
-  };
-  assert.ok(widthOf(viewWith) > widthOf(viewWithout), '出血后底图应更宽');
-  // 而宽度先顶满的数据（EAST）比例尺不受出血影响 —— 出血不是无脑放大。
-  assert.equal(viewOf(withBleed).scale, viewOf(noBleed).scale);
-
-  // 非法出血值回退默认并逐条告警，不产生坏布局。
-  const bad = normalizeSafeAreaConfig({
-    ...config,
-    platforms: {
-      ...config.platforms,
-      douyin: {...config.platforms.douyin, mapBleed: {top: -5, bottom: 'x'}},
-    },
+  }
+  // 取景端拿到的矩形就是核心区，文字与地图形状共用一条边界。
+  const short = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(10)});
+  const view = resolveViewport(geojson, EAST, {}, MAP_STAGE, {
+    mapRect: short.mapRect,
+    labelRect: short.labelRect,
+    keepOutRect: short.interactiveGapRect,
   });
-  assert.equal(bad.config.platforms.douyin.mapBleed.top, config.platforms.douyin.mapBleed.top);
-  assert.equal(bad.config.platforms.douyin.mapBleed.bottom, config.platforms.douyin.mapBleed.bottom);
-  assert.ok(bad.warnings.some((line) => line.includes('mapBleed.top')));
-  assert.ok(bad.warnings.some((line) => line.includes('mapBleed.bottom')));
+  assert.deepEqual(view.mapRect, short.coreRect);
+  assert.equal(view.coverage, 1);
+  assert.deepEqual(view.droppedIds, []);
 });
 
 test('不传安全区时取景行为与原来一致（向后兼容）', () => {
@@ -739,4 +706,314 @@ test('标签盒子尺寸与落位结果自洽', () => {
   // 引线起点贴在锚点旁边。
   assert.equal(Math.round(placement.anchor[0]), 700);
   assert.equal(Math.round(placement.anchor[1]), 800);
+});
+
+/* -------------------------------------------------------------------------- *
+ * 四分区模型：配置只写四个区，其余矩形都是派生量
+ * -------------------------------------------------------------------------- */
+
+test('配置只定义四个分区：互动栏横向范围由右边距推导，不再重复写 x/width', () => {
+  for (const platform of PLATFORMS) {
+    const raw = config.platforms[platform];
+    assert.equal(raw.interactiveKeepOut.x, undefined);
+    assert.equal(raw.interactiveKeepOut.width, undefined);
+
+    const resolution = resolveSafeArea(config, {platform, description: 'x'.repeat(10)});
+    assert.ok(resolution.interactiveRect);
+    assert.equal(
+      resolution.interactiveRect.x0,
+      resolution.canvas.width - resolution.margins.right,
+    );
+    assert.equal(resolution.interactiveRect.x1, resolution.canvas.width);
+    assert.equal(resolution.interactiveRect.y0, raw.interactiveKeepOut.y);
+    assert.equal(
+      resolution.interactiveRect.y1,
+      raw.interactiveKeepOut.y + raw.interactiveKeepOut.height,
+    );
+
+    // 同一个事实只有一处来源：改右边距，互动栏跟着动。
+    const wider = {
+      ...config,
+      platforms: {
+        ...config.platforms,
+        [platform]: { ...raw, margins: {...raw.margins, right: 240} },
+      },
+    };
+    const moved = resolveSafeArea(wider, {platform, description: 'x'.repeat(10)});
+    assert.equal(moved.interactiveRect.x0, moved.canvas.width - 240);
+  }
+});
+
+test('随包配置、内置默认值与版本号一致：缺配置文件时不会悄悄换构图', () => {
+  assert.equal(config.version, SAFE_AREA_CONFIG_VERSION);
+  for (const platform of PLATFORMS) {
+    assert.deepEqual(
+      DEFAULT_SAFE_AREA_CONFIG.platforms[platform].margins,
+      config.platforms[platform].margins,
+    );
+    assert.deepEqual(
+      DEFAULT_SAFE_AREA_CONFIG.platforms[platform].bottomByTier,
+      config.platforms[platform].bottomByTier,
+    );
+  }
+  const fromFile = resolveSafeArea(config, {description: 'x'.repeat(10)});
+  const fromDefaults = resolveSafeArea(null, {description: 'x'.repeat(10)});
+  assert.deepEqual(fromDefaults.mapRect, fromFile.mapRect);
+  assert.deepEqual(fromDefaults.coreRect, fromFile.coreRect);
+  assert.deepEqual(fromDefaults.interactiveRect, fromFile.interactiveRect);
+});
+
+test('取景矩形统一为核心区：渲染端、配置说明与文档说法一致', () => {
+  const video = fs.readFileSync(
+    path.join(root, 'src', 'video', 'ThailandRankingVideo.tsx'),
+    'utf8',
+  );
+  assert.ok(/fitRect:\s*design\.core/.test(video), '渲染端取景目标应是核心区');
+  assert.ok(config.note.join('\n').includes('mapRect 恒等于 coreRect'));
+  const doc = fs.readFileSync(path.join(root, 'SAFE_AREA.md'), 'utf8');
+  assert.ok(doc.includes('fitRect（= coreRect）'));
+  assert.equal(doc.includes('fitRect（= mapRect）'), false);
+});
+
+test('预览遮罩只画四分区：不再有独立的禁入区框', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const overlay = fs.readFileSync(
+    path.join(root, 'src', 'video', 'components', 'SafeAreaOverlay.tsx'),
+    'utf8',
+  );
+  assert.equal(/safe-keepout/.test(html), false);
+  assert.equal(/interactiveRect/.test(overlay), false);
+  assert.equal(/标签安全区|内框（标签安全带）/.test(html), false);
+  assert.equal(/rect class="frame"|stroke-dasharray/.test(html), false, '不应再有取景虚线框');
+  assert.ok(html.includes('顶部导航'));
+  assert.ok(html.includes('核心排名内容'));
+});
+
+test('取景参数只有一组 coreMargins：历史的两套位移/间距叠加不能复活', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const server = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  const both = html + server;
+  // 两套历史覆盖参数（位移滑块 / 四边间距）及其叠加逻辑不能复活；
+  // 现在的唯一入口是 coreMargins，直接在 resolveSafeArea 里覆盖四分区边界。
+  assert.equal(
+    /labelBandAdjust|bandLeft|applyBandAdjust|readBandAdjust|frameGap|applyFrameGaps|readFrameGaps/.test(both),
+    false,
+  );
+  assert.ok(both.includes('coreMargins'), '四分区边界应通过 coreMargins 调整');
+  assert.equal(/border: 1px dashed/.test(html), false, '手机屏幕外框应是实线');
+  assert.equal(/rect class="frame"|stroke-dasharray/.test(html), false, '不应再画取景虚线框');
+  assert.equal(/mapBleed/.test(fs.readFileSync(configPath, 'utf8')), false, '底图出血参数已删除');
+  // 服务端两处链路直接 resolveSafeAreaFor，不再二次加工取景矩形。
+  assert.ok((server.match(/resolveSafeAreaFor\(/g) || []).length >= 2);
+  const previewBlock = server.slice(
+    server.indexOf('if (req.method === "POST" && pathname === "/api/framing/preview")'),
+    server.indexOf('if (req.method === "POST" && pathname === "/api/generate")'),
+  );
+  assert.ok(
+    previewBlock.includes('        safeArea,'),
+    '预览响应必须回传同一份 safeArea',
+  );
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(10)});
+  assert.deepEqual(resolution.mapRect, resolution.coreRect);
+});
+
+test('coreMargins：四边覆盖同时驱动核心框、取景矩形、压暗带与互动栏', () => {
+  const base = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(10)});
+  assert.equal(base.coreMarginsApplied, false);
+  assert.deepEqual(base.mapRect, base.coreRect);
+
+  const adjusted = resolveSafeArea(config, {
+    platform: 'tiktok',
+    description: 'x'.repeat(10),
+    coreMargins: {top: 300, bottom: 520, left: 120, right: 240},
+  });
+  assert.equal(adjusted.coreMarginsApplied, true);
+  assert.deepEqual(adjusted.margins, {top: 300, bottom: 520, left: 120, right: 240});
+  assert.equal(adjusted.coreRect.x0, 120);
+  assert.equal(adjusted.coreRect.y0, 300);
+  assert.equal(adjusted.coreRect.y1, 1920 - 520);
+  // 手动调右边距时互动栏横向同步跟随，核心框右边界只再退一个 contentGapPx。
+  assert.equal(adjusted.interactiveRect.x0, 1080 - 240);
+  assert.equal(adjusted.interactiveRect.x1, 1080);
+  assert.equal(adjusted.coreRect.x1, 1080 - 240 - config.contentGapPx);
+  // 唯一的取景矩形与文字边界都等于核心框。
+  assert.deepEqual(adjusted.mapRect, adjusted.coreRect);
+  assert.deepEqual(adjusted.labelRect, adjusted.coreRect);
+  // 四条压暗带同样来自这一组值，不另造边界。
+  assert.equal(adjusted.topBandRect.y1, 300);
+  assert.equal(adjusted.bottomBandRect.y0, 1920 - 520);
+  assert.equal(adjusted.leftBandRect.x1, 120);
+  assert.equal(adjusted.rightBandRect.x0, 1080 - 240);
+
+  // 只改一条边时其余三边保持派生值，互动栏仍然跟着右边走。
+  const onlyRight = resolveSafeArea(config, {
+    platform: 'tiktok',
+    description: 'x'.repeat(10),
+    coreMargins: {right: 240},
+  });
+  assert.equal(onlyRight.coreMarginsApplied, true);
+  assert.equal(onlyRight.margins.top, base.margins.top);
+  assert.equal(onlyRight.margins.bottom, base.margins.bottom);
+  assert.equal(onlyRight.margins.left, base.margins.left);
+  assert.equal(onlyRight.interactiveRect.x0, 1080 - 240);
+  assert.deepEqual(onlyRight.mapRect, onlyRight.coreRect);
+});
+
+test('coreMargins：优先于描述分档，非法值逐条告警，过大值收敛', () => {
+  const longDescription = 'x'.repeat(260);
+  // 抖音 long 档默认 600px，手动给的 500px 必须赢，否则「调了没反应」。
+  const overridden = resolveSafeArea(config, {
+    platform: 'douyin',
+    description: longDescription,
+    coreMargins: {bottom: 500},
+  });
+  assert.equal(overridden.descriptionTier, 'long');
+  assert.equal(overridden.margins.bottom, 500);
+  assert.equal(overridden.coreMarginsApplied, true);
+  assert.equal(overridden.coreRect.y1, 1920 - 500);
+
+  // 非法值只忽略该边，不牵连其余边，也不产生坏布局。
+  const bad = resolveSafeArea(config, {
+    platform: 'tiktok',
+    description: 'x'.repeat(10),
+    coreMargins: {top: -5, bottom: 'abc', left: Infinity, right: 200},
+  });
+  const pristine = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(10)});
+  assert.equal(bad.margins.top, pristine.margins.top);
+  assert.equal(bad.margins.bottom, pristine.margins.bottom);
+  assert.equal(bad.margins.left, pristine.margins.left);
+  assert.equal(bad.margins.right, 200);
+  assert.equal(bad.coreMarginsApplied, true);
+  for (const side of ['top', 'bottom', 'left']) {
+    assert.ok(
+      bad.warnings.some((line) => line.includes(`coreMargins.${side}`)),
+      `${side} 非法应逐条告警`,
+    );
+  }
+
+  // 非对象 / 空对象都视为「没有手动调整」，回到默认派生。
+  const notObject = resolveSafeArea(config, {
+    platform: 'tiktok', description: 'x'.repeat(10), coreMargins: 42,
+  });
+  assert.equal(notObject.coreMarginsApplied, false);
+  assert.deepEqual(notObject.margins, pristine.margins);
+  assert.ok(notObject.warnings.some((line) => line.includes('coreMargins 必须是')));
+  const empty = resolveSafeArea(config, {
+    platform: 'tiktok', description: 'x'.repeat(10), coreMargins: {},
+  });
+  assert.equal(empty.coreMarginsApplied, false);
+  assert.deepEqual(empty.coreRect, pristine.coreRect);
+
+  // 超过画布 45% 的边由既有收敛逻辑处理，不会把画面吃光。
+  const huge = resolveSafeArea(config, {
+    platform: 'tiktok', description: 'x'.repeat(10), coreMargins: {top: 9999},
+  });
+  assert.equal(huge.margins.top, Math.floor(1920 * 0.45));
+  assert.ok(huge.warnings.some((line) => line.includes('45%')));
+  assert.ok(huge.coreRect.y1 - huge.coreRect.y0 > 0);
+});
+
+test('核心框四边控件：预览图右侧每个参数单独成行，预览与成片同源', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const server = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  // 上 / 下 / 左 / 右各是一个独立的 label 行，容器是纵向 flex。
+  for (const id of ['coreTop', 'coreBottom', 'coreLeft', 'coreRight']) {
+    assert.ok(
+      new RegExp(`<label>[^<]*<input id="${id}"`).test(html),
+      `${id} 应单独成行`,
+    );
+  }
+  assert.ok(
+    /\.core-margins-grid\s*\{[^}]*flex-direction:\s*column/.test(html),
+    '四个参数应纵向逐行排布',
+  );
+  assert.ok(/class="framing-side"/.test(html) && /class="preview-col"/.test(html));
+  // 预览与成片两条请求都送同一组值；服务端透传给 resolveSafeArea。
+  assert.equal((html.match(/coreMargins:\s*coreMarginsState\(\)/g) || []).length, 2);
+  assert.ok(/coreMargins:\s*body\?\.coreMargins/.test(server));
+  assert.equal(
+    (server.match(/resolveSafeAreaFor\(/g) || []).length >= 2,
+    true,
+    '预览与生成都走同一个安全区入口',
+  );
+  // 核心框常驻绘制，画的是服务端返回的 coreRect，与遮罩开关无关。
+  assert.ok(/class="safe-core"/.test(html));
+  assert.ok(/scaleSafeRect\(safeArea\.coreRect/.test(html));
+  assert.ok(/重置为平台默认/.test(html));
+  // 配置版本号与代码常量一致。
+  assert.equal(config.version, SAFE_AREA_CONFIG_VERSION);
+  const doc = fs.readFileSync(path.join(root, 'SAFE_AREA.md'), 'utf8');
+  assert.ok(doc.includes(`\`${config.version}\``), '文档版本号应与配置一致');
+  assert.ok(doc.includes('coreMargins'));
+});
+
+test('预览参数列窄化：不再有硬 min-width 撑出横向滚动，取景参数三个一排', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  // 三处曾把参数列顶宽的硬下限必须消失；图列自适应、参数列固定 160px。
+  assert.equal(/\.framing-side\s*\{[^}]*min-width:\s*260px/.test(html), false);
+  assert.equal(/\.framing-info\s*\{[^}]*min-width:\s*260px/.test(html), false);
+  assert.equal(/\.preview-col\s*\{[^}]*min-width:\s*300px/.test(html), false);
+  assert.equal(/\.preview-col\s*\{[^}]*width:\s*56%/.test(html), false);
+  assert.ok(/\.framing-side\s*\{[^}]*flex:\s*0 0 160px/.test(html));
+  assert.ok(/\.preview-col\s*\{[^}]*flex:\s*1 1 auto/.test(html));
+  // 「4 / 地图取景」参数三个一排；select 必须能收缩，否则被最长 option 撑开列。
+  assert.ok(/class="field-grid framing-main"/.test(html));
+  assert.ok(
+    /\.card\.row\.actions \.framing-main\s*\{[^}]*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(html),
+    '取景参数应三个一排',
+  );
+  assert.ok(/\.card\.row\.actions select\s*\{[^}]*min-width:\s*0/.test(html));
+  assert.ok(/\.card\.row\.actions \.field label\s*\{[^}]*font-size:\s*9px/.test(html));
+  // 窄屏要有单列降级，避免三列在小视口里挤坏。
+  assert.ok(
+    /@media \(max-width: 800px\)[\s\S]*?\.card\.row\.actions \.framing-main\s*\{\s*grid-template-columns:\s*1fr/.test(html),
+  );
+});
+
+/* -------------------------------------------------------------------------- *
+ * 默认参数（2026-11-07.4）：预览页、配置、服务端取景默认值同源
+ * -------------------------------------------------------------------------- */
+
+test('默认参数：四边 100/150/10/10、主体右移 0px、取景远近 100% 三处一致', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const viewportSource = fs.readFileSync(
+    path.join(root, 'src', 'framing', 'resolveViewport.ts'),
+    'utf8',
+  );
+
+  // 「2 / 地图取景预览」右侧四个输入框的初始值 = 平台默认四边。
+  const defaults = {coreTop: 100, coreBottom: 150, coreLeft: 10, coreRight: 10};
+  for (const [id, value] of Object.entries(defaults)) {
+    assert.ok(
+      new RegExp(`<input id="${id}"[^>]*value="${value}"`).test(html),
+      `${id} 初始值应为 ${value}`,
+    );
+  }
+  assert.ok(
+    /tiktok:\s*\{top:\s*100,\s*bottom:\s*150,\s*left:\s*10,\s*right:\s*10\}/.test(html),
+    '前端「重置为平台默认」的值应与配置一致',
+  );
+  assert.deepEqual(config.platforms.tiktok.margins, {top: 100, bottom: 150, left: 10, right: 10});
+  assert.deepEqual(config.platforms.tiktok.bottomByTier, {short: 150, medium: 150, long: 150});
+
+  // 不传 coreMargins 时，服务端派生出来的四边就是同一组值（预览回填的真值）。
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(120)});
+  assert.equal(resolution.coreMarginsApplied, false);
+  assert.deepEqual(resolution.margins, {top: 100, bottom: 150, left: 10, right: 10});
+  assert.equal(resolution.coreRect.x0, 10);
+  assert.equal(resolution.coreRect.y0, 100);
+  assert.equal(resolution.coreRect.y1, 1920 - 150);
+
+  // 「4 / 地图取景」：主体右移 0px、取景远近 100%，滑块 / 读数 / JS 兜底 / 服务端四处一致。
+  assert.ok(/id="subjectOffsetX"[\s\S]{0,160}value="0"/.test(html));
+  assert.ok(/id="subjectOffsetXValue"[^>]*>0px</.test(html));
+  assert.ok(/Number\.isFinite\(offsetPx\)\s*\?\s*offsetPx\s*:\s*0/.test(html));
+  assert.ok(/const SUBJECT_CENTER_OFFSET_X = 0;/.test(viewportSource));
+  assert.equal(resolveViewport(geojson, EAST, {}, MAP_STAGE).subjectOffsetX, 0);
+
+  assert.ok(/id="zoomDistance"[\s\S]{0,160}value="100"/.test(html));
+  assert.ok(/id="zoomDistanceValue"[^>]*>100%</.test(html));
+  assert.ok(/Number\.isFinite\(zoomPercent\)\s*\?\s*zoomPercent\s*:\s*100/.test(html));
+  assert.ok(/zoomDistance:\s*1,/.test(viewportSource));
+  assert.equal(resolveViewport(geojson, EAST, {}, MAP_STAGE).zoomDistance, 1);
 });

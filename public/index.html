@@ -442,15 +442,14 @@
       scrollbar-gutter: stable;
     }
 
-    /* 预览图那一列：占卡片左侧一半以上。min-width 是预览图的保底宽度——
-       卡片再窄也不压这一列，改为让整块出现横向滚动条，图不会被挤小。 */
+    /* 预览图吃掉右侧窄参数列之外的全部宽度：不再有 56% 与 300px 的硬下限。
+       参数列固定 160px，两列宽度相加永远等于卡片内容宽，参数不用横向滑动去调。 */
     .preview-col {
       display: flex;
-      flex: 0 0 auto;
+      flex: 1 1 auto;
       flex-direction: column;
       gap: 3px;
-      width: 56%;
-      min-width: 300px;
+      min-width: 0;
     }
 
     /* The full portrait canvas: the map is drawn full-bleed inside it. The SVG
@@ -467,10 +466,12 @@
       align-items: center;
       justify-content: center;
       width: 100%;
-      height: 100%;
-      min-height: 400px;
+      /* 锁定 9:16：容器边 = viewBox(1080x1920) 边 = 手机屏幕边，避免 meet
+         模式在比例不符时产生信箱留白 —— 否则「取景框距屏幕」的读数不准。
+         手机屏幕是这个页面唯一的大框，改用实线，不再用虚线装饰。 */
+      aspect-ratio: 9 / 16;
       background: radial-gradient(circle at 50% 36%, #43b4e8, #2fa9e1 68%);
-      border: 1px dashed #1f6e96;
+      border: 1px solid #1f6e96;
       border-radius: 8px;
     }
 
@@ -491,64 +492,21 @@
       stroke-width: 1.1;
     }
 
-    /* A ranking province that made it into the frame. `fill` 是兜底，
-       实际颜色由脚本按名次内联覆盖；白色描边把相邻橙/绿府分开。 */
+    /* 排名府一律按名次着色（填充由脚本内联写入，这里是兜底）；白色描边把
+       相邻橙/绿府分开。取景框内外同一套样式，不再做出框标记。 */
     .map path.lit {
       fill: #e0661a;
       stroke: #ffffff;
       stroke-width: 1.5;
     }
 
-    /* A ranking province framed out on purpose: still drawn, never dropped.
-       白色陆地 + 橙色虚线，一眼看出「在画面外但没丢」。 */
-    .map path.off {
-      fill: #ffffff;
-      stroke: #e0661a;
-      stroke-width: 1.4;
-      stroke-dasharray: 7 6;
-      stroke-opacity: 0.9;
-    }
-
-    /* The framing window (safe area) the auto-framing fits the data into. */
-    .map rect.frame {
-      fill: none;
-      stroke: #1f6e96;
-      stroke-width: 2;
-      stroke-dasharray: 12 9;
-      opacity: 0.62;
-    }
-
-    /* Title band scrim, tinted like the render (sea-blue gradient). Only the
-       header band has one; the footer band carries no text and stays clear. */
-    .map rect.band {
-      fill: rgba(47, 169, 225, 0.82);
-    }
-
-    .map rect.label-band {
-      fill: none;
-      stroke: rgba(16, 42, 56, 0.42);
-      stroke-width: 2;
-      stroke-dasharray: 4 10;
-    }
-
-    .map text.band-label {
-      fill: rgba(16, 42, 56, 0.82);
-      font-size: 26px;
-      letter-spacing: 2px;
-    }
-
-    /* 平台 UI 安全区遮罩（仅开发预览存在；成片永远不含遮罩，见
-       src/video/components/SafeAreaOverlay.tsx 的开关）。外部半透明压暗，
-       核心安全区实线，标签安全区点线，右侧互动栏禁入区用橙红区分。 */
+    /* 平台 UI 四分区遮罩（仅开发预览存在；成片永远不含遮罩，见
+       src/video/components/SafeAreaOverlay.tsx 的开关）：四条半透明压暗带 +
+       四个短标签。唯一的橙红实线核心框由 drawFramingPreview 常驻绘制（与遮罩
+       开关无关），这里不重复画；禁入区框、取景虚线框与坐标数字都已删除 ——
+       那些是同一套边界派生出来的几何量，不是分区。 */
     .map rect.safe-mask {
       fill: rgba(6, 32, 48, 0.42);
-    }
-
-    .map rect.safe-map-area {
-      fill: none;
-      stroke: rgba(224, 102, 26, 0.45);
-      stroke-width: 2;
-      stroke-dasharray: 10 8;
     }
 
     .map rect.safe-core {
@@ -557,35 +515,14 @@
       stroke-width: 3;
     }
 
-    .map rect.safe-label {
-      fill: none;
-      stroke: rgba(224, 102, 26, 0.85);
-      stroke-width: 2;
-      stroke-dasharray: 6 6;
-    }
-
-    .map rect.safe-keepout {
-      fill: rgba(255, 138, 92, 0.18);
-      stroke: #ff8a5c;
-      stroke-width: 3;
-    }
-
-    .map rect.safe-keepout-gap {
-      fill: none;
-      stroke: #ff8a5c;
-      stroke-width: 1.5;
-      stroke-dasharray: 4 6;
-      opacity: 0.85;
-    }
-
     .map text.safe-caption {
       fill: #12303f;
       font-size: 24px;
       letter-spacing: 1px;
     }
 
-    .map text.safe-caption.warn {
-      fill: #ff8a5c;
+    .map text.safe-caption.light {
+      fill: #d8f7f2;
     }
 
     /* 第三排多张卡之间留缝。 */
@@ -653,11 +590,11 @@
       color: #9dc2c0;
     }
 
-    /* 取景参数：放在预览图右边，一列一组「参数名 - 参数值」，字号再压小给图腾宽度。 */
+    /* 取景读数：跟着右侧窄参数列自适应，靠换行消化长文本，不再用 min-width
+       把整块撑出横向滚动条。 */
     .framing-info {
       flex: 1 1 auto;
-      /* 参数列的最小宽度：低于它就不再继续压缩参数，交给外层横向滚动。 */
-      min-width: 260px;
+      min-width: 0;
       overflow: auto;
       font-size: 8px;
       line-height: 1.28;
@@ -686,11 +623,15 @@
       color: #ffd18a;
     }
 
+    /* 预览里的标题是**浮层**，不是顶部一条带：位置与成片同源，由脚本按
+       「核心框顶部往下 1/3」写入 top（这里 33.333% 只是脚本算出来之前的兜底），
+       垂直靠 translateY(-50%) 让文字中心落在那个点上。 */
     .preview-title {
       position: absolute;
-      top: 10px;
+      top: 33.333%;
       right: 8px;
       left: 8px;
+      transform: translateY(-50%);
       /* 浅色主题：标题是深墨绿压在蓝海/白陆地上（与 theme.text 一致）。 */
       color: #203027;
       font-size: 13px;
@@ -707,6 +648,89 @@
       line-height: 1.4;
     }
 
+    /* 预览图右侧：核心框四边（唯一一组构图参数）+ 取景计算结果。
+       固定 160px 窄列，图列自适应；删掉原来的 min-width:260px 硬下限。 */
+    .framing-side {
+      display: flex;
+      flex: 0 0 160px;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+      max-width: 160px;
+      min-height: 0;
+    }
+
+    /* 核心框四边 = 四个分区的四条边界，也是唯一一个矩形的四条边。
+       上 / 下 / 左 / 右各占一行；窄列里控件、字号、说明一起压小。 */
+    .core-margins {
+      flex: 0 0 auto;
+      min-width: 0;
+      padding: 6px 7px;
+      border: 1px solid rgba(124, 165, 164, 0.35);
+      border-radius: 7px;
+      font-size: 8px;
+      color: #9dc2c0;
+    }
+
+    .core-margins-title {
+      margin-bottom: 3px;
+      color: #cbe6e4;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .core-margins-sub {
+      margin: 0 0 5px;
+      color: #7ca5a4;
+      font-size: 8px;
+      line-height: 1.35;
+    }
+
+    .core-margins-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .core-margins-grid label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 4px;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .core-margins-grid input {
+      width: 62px;
+      min-width: 0;
+      padding: 1px 3px;
+      font-size: 9px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 窄列放不下「状态 + 按钮」并排，改成上下两行，按钮占满宽度。 */
+    .core-margins-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    .core-margins-state {
+      color: #7ca5a4;
+      font-size: 8px;
+      line-height: 1.3;
+    }
+
+    .core-margins-actions button {
+      width: 100%;
+      padding: 2px 4px;
+      font-size: 8px;
+    }
+
     /* 第二排：地图取景 : 生成音频与视频 = 4 : 3。 */
     .card.row.actions {
       display: grid;
@@ -719,29 +743,35 @@
       min-width: 0;
     }
 
-    /* 「参数名：参数值」排在同一行；整块收窄，控件比之前窄 1/3 左右。 */
-    .card.row.actions .field-grid {
-      max-width: 760px;
+    /* 「参数名：参数值」同一行；取景参数三个一排，选择框宽度与字号一起收窄，
+       第二排不再占用大片面积，第一排的预览卡能拿到更多高度。
+       min-width:0 是必须的：原生 select 会被最长 option 撑开列宽。 */
+    .card.row.actions .framing-main {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      max-width: none;
+      gap: 2px 8px;
     }
 
     .card.row.actions .field {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
-      gap: 6px;
-      margin: 4px 0;
+      gap: 4px;
+      margin: 2px 0;
+      min-width: 0;
     }
 
     .card.row.actions .field label {
       margin: 0;
-      font-size: 10px;
+      font-size: 9px;
       white-space: nowrap;
     }
 
     .card.row.actions input,
     .card.row.actions select {
-      padding: 3px 5px;
-      font-size: 10px;
+      min-width: 0;
+      padding: 2px 4px;
+      font-size: 9px;
     }
 
     .card.row.actions .hint {
@@ -909,8 +939,9 @@
         grid-template-columns: 1fr;
       }
 
-      .card.row.actions .field-grid {
-        max-width: none;
+      /* 单列铺排时卡片几乎占满视口，取景参数仍保持三个一排。 */
+      .card.row.actions .framing-main {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .generate-box {
@@ -930,12 +961,18 @@
         grid-template-columns: 1fr;
       }
 
+      /* 更窄的视口里三列放不下，取景参数退回单列。 */
+      .card.row.actions .framing-main {
+        grid-template-columns: 1fr;
+      }
+
       .framing-grid {
         grid-template-columns: auto minmax(0, 1fr);
       }
 
       .preview {
-        min-height: 320px;
+        /* 窄屏下也保持 9:16（aspect-ratio 由主规则提供），不再强制最小高。 */
+        min-height: 0;
       }
 
       .card.script-row {
@@ -1022,7 +1059,26 @@
           <div id="previewNote" class="preview-note">正在计算取景…</div>
         </div>
 
-        <div id="framingInfo" class="framing-info"></div>
+        <div class="framing-side">
+          <div class="core-margins">
+            <div class="core-margins-title">核心框四边 · 距屏幕（px）</div>
+            <p class="core-margins-sub">
+              四分区边界 = 橙红框四边；数值变大向内收。预览与成片同源。
+            </p>
+            <div class="core-margins-grid">
+              <label>上边 <input id="coreTop" type="number" min="0" max="864" step="1" value="100" /></label>
+              <label>下边 <input id="coreBottom" type="number" min="0" max="864" step="1" value="150" /></label>
+              <label>左边 <input id="coreLeft" type="number" min="0" max="486" step="1" value="10" /></label>
+              <label>右边 <input id="coreRight" type="number" min="0" max="486" step="1" value="10" /></label>
+            </div>
+            <div class="core-margins-actions">
+              <span id="coreMarginsState" class="core-margins-state">跟随平台默认</span>
+              <button id="coreMarginsReset" type="button">重置为平台默认</button>
+            </div>
+          </div>
+
+          <div id="framingInfo" class="framing-info"></div>
+        </div>
       </div>
     </section>
 
@@ -1123,7 +1179,7 @@
       <div class="framing-fields">
         <h2>4 / 地图取景 <span class="sub">生成前一次性计算；开场白开始 0.5s 后推镜，第一个名次念完落位，之后镜头固定</span></h2>
 
-        <div class="field-grid">
+        <div class="field-grid framing-main">
           <div class="field">
             <label for="fitMode" title="fitMode">取景模式：</label>
             <select id="fitMode">
@@ -1195,8 +1251,8 @@
           <div class="field">
             <label
               for="subjectOffsetX"
-              title="subjectOffsetX：排名府整体中心对齐安全区中心后，再向右偏移的像素。默认 20 补偿右侧互动栏造成的视觉偏左；可为负（向左）。取景框装不下时由兜底自动后退。"
-              >主体右移：<span id="subjectOffsetXValue" class="mono">20px</span></label
+              title="subjectOffsetX：排名府整体中心对齐安全区中心后，再向右偏移的像素。默认 0 = 严格居中不偏移；可为负（向左）。取景框装不下时由兜底自动后退。"
+              >主体右移：<span id="subjectOffsetXValue" class="mono">0px</span></label
             >
             <input
               id="subjectOffsetX"
@@ -1204,7 +1260,7 @@
               min="-200"
               max="200"
               step="1"
-              value="20"
+              value="0"
             />
           </div>
 
@@ -1300,7 +1356,7 @@
       <h2>
         6 / 发布设置（平台 UI 安全区）
         <span class="sub"
-          >TikTok 与抖音各自独立；参数为工程初始估值，待真机截图校准</span
+          >TikTok 与抖音各自独立；参数为工程初始估值，待真机截图校准；核心框四边在「2 / 地图取景预览」右侧调整</span
         >
       </h2>
 
@@ -1331,6 +1387,7 @@
             <option value="true">在地图预览上显示</option>
           </select>
         </div>
+
       </div>
 
       <div id="safeAreaInfo" class="safe-area-info"></div>
@@ -1448,7 +1505,7 @@
 
       // 主体右移：滑块像素值（-200~200），0 = 严格居中不偏移。始终显式传。
       const offsetPx = Number($("#subjectOffsetX").value);
-      framing.subjectOffsetX = Number.isFinite(offsetPx) ? offsetPx : 20;
+      framing.subjectOffsetX = Number.isFinite(offsetPx) ? offsetPx : 0;
 
       // 取景远近：滑块是百分数（25~400），接口要 0.25~4 的倍率。
       // 100 = 自动取景现状（默认）。始终显式传。
@@ -1486,6 +1543,69 @@
 
     const safeAreaPreviewEnabled = () => $("#safeAreaPreview").value === "true";
 
+    /**
+     * 核心框四边 = 四个分区的四条边界 = 唯一一组构图参数。
+     *
+     * - 默认「跟随平台」：不发送 coreMargins，服务端按平台配置 + 描述分档派生，
+     *   输入框自动回填服务端当前生效值（用户看到的永远是真值）。
+     * - 任一输入框被改动即整体接管：四个当前值一起发给预览与成片，两条链路
+     *   走同一个 resolveSafeArea，不存在第二套位移或补偿。
+     * - 「重置为平台默认」清除接管，回到自动派生。
+     */
+    const CORE_MARGIN_DEFAULTS = {
+      tiktok: {top: 100, bottom: 150, left: 10, right: 10},
+      douyin: {top: 240, bottom: 480, left: 72, right: 180},
+    };
+    const CORE_MARGIN_INPUTS = {
+      top: "#coreTop",
+      bottom: "#coreBottom",
+      left: "#coreLeft",
+      right: "#coreRight",
+    };
+    let coreMarginsOverridden = false;
+
+    const coreMarginsState = () => {
+      if (!coreMarginsOverridden) return undefined;
+      const read = (selector) => {
+        const value = Number($(selector).value);
+        return Number.isFinite(value) ? Math.max(0, value) : 0;
+      };
+      return {
+        top: read(CORE_MARGIN_INPUTS.top),
+        bottom: read(CORE_MARGIN_INPUTS.bottom),
+        left: read(CORE_MARGIN_INPUTS.left),
+        right: read(CORE_MARGIN_INPUTS.right),
+      };
+    };
+
+    const syncCoreMarginsStateLabel = () => {
+      $("#coreMarginsState").textContent = coreMarginsOverridden
+        ? "手动调整中 · 同步生效"
+        : "跟随平台默认";
+    };
+
+    /** 未接管时把服务端当前生效的四边回填到四个输入框（程序赋值不触发 input 事件）。 */
+    const syncCoreMarginsFromSafeArea = (safeArea) => {
+      if (!safeArea || coreMarginsOverridden) return;
+      const margins = safeArea.margins;
+      $(CORE_MARGIN_INPUTS.top).value = Math.round(margins.top);
+      $(CORE_MARGIN_INPUTS.bottom).value = Math.round(margins.bottom);
+      $(CORE_MARGIN_INPUTS.left).value = Math.round(margins.left);
+      $(CORE_MARGIN_INPUTS.right).value = Math.round(margins.right);
+      syncCoreMarginsStateLabel();
+    };
+
+    const resetCoreMargins = () => {
+      coreMarginsOverridden = false;
+      const defaults =
+        CORE_MARGIN_DEFAULTS[$("#publishPlatform").value] ?? CORE_MARGIN_DEFAULTS.tiktok;
+      $(CORE_MARGIN_INPUTS.top).value = defaults.top;
+      $(CORE_MARGIN_INPUTS.bottom).value = defaults.bottom;
+      $(CORE_MARGIN_INPUTS.left).value = defaults.left;
+      $(CORE_MARGIN_INPUTS.right).value = defaults.right;
+      syncCoreMarginsStateLabel();
+    };
+
     /** 安全区坐标画在 1080x1920 画布上；预览 viewBox 不同则等比换算。 */
     const scaleSafeRect = (rect, from, to) => {
       const sx = from.width > 0 ? to.width / from.width : 1;
@@ -1499,13 +1619,19 @@
     };
 
     /**
-     * 安全区可视化（**仅预览**）：安全区外部半透明压暗 + 核心安全区实线 +
-     * 标签安全区点线 + 右侧互动栏禁入区橙红。成片不含这些内容 —— 渲染端只在
-     * `debugSafeArea` 显式为 true 时才画，而生成请求从不设置它。
+     * 平台 UI 四分区可视化（**仅预览**）：四条半透明压暗带 + 四个短标签。
+     * 成片不含这些内容 —— 渲染端只在 `debugSafeArea` 显式为 true 时才画，
+     * 而生成请求从不设置它。
+     *
+     * 唯一的那个框（核心框实线）由 `drawFramingPreview` 常驻绘制，与遮罩开关
+     * 无关：调整右侧四边时要能直接看到框在动。这里只叠加分区压暗带，不重复
+     * 画第二个框，也不再画禁入区框、取景虚线框或坐标数字。
      */
     const safeAreaOverlaySvg = (safeArea, stage) => {
       if (!safeArea) return "";
       const from = safeArea.canvas;
+      const ux = stage.width / from.width;
+      const uy = stage.height / from.height;
       const box = (rect) => {
         const scaled = scaleSafeRect(rect, from, stage);
         return {
@@ -1516,16 +1642,16 @@
         };
       };
       const margins = {
-        top: (safeArea.margins.top / from.height) * stage.height,
-        bottom: (safeArea.margins.bottom / from.height) * stage.height,
-        left: (safeArea.margins.left / from.width) * stage.width,
-        right: (safeArea.margins.right / from.width) * stage.width,
-      };
-      const rectAttrs = (rect) => {
-        const b = box(rect);
-        return `x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"`;
+        top: safeArea.margins.top * uy,
+        bottom: safeArea.margins.bottom * uy,
+        left: safeArea.margins.left * ux,
+        right: safeArea.margins.right * ux,
       };
       const core = box(safeArea.coreRect);
+      const caption = (x, y, text, light) =>
+        `<text class="safe-caption${light ? " light" : ""}" x="${x}" y="${y}">${escapeHtml(
+          text,
+        )}</text>`;
       const parts = [
         `<rect class="safe-mask" x="0" y="0" width="${stage.width}" height="${margins.top}"></rect>`,
         `<rect class="safe-mask" x="0" y="${stage.height - margins.bottom}" width="${
@@ -1539,72 +1665,16 @@
         }" width="${margins.right}" height="${
           stage.height - margins.top - margins.bottom
         }"></rect>`,
-        `<rect class="safe-map-area" ${rectAttrs(safeArea.mapRect)}></rect>`,
-        `<rect class="safe-core" ${rectAttrs(safeArea.coreRect)}></rect>`,
-        `<rect class="safe-label" ${rectAttrs(safeArea.labelRect)}></rect>`,
+        caption(24 * ux, 64 * uy, "顶部导航", true),
+        caption(
+          stage.width - margins.right + 12 * ux,
+          margins.top + 38 * uy,
+          "右侧互动栏",
+          true,
+        ),
+        caption(24 * ux, stage.height - margins.bottom + 44 * uy, "账号 ID · 描述", true),
+        caption(core.x + 18 * ux, core.y + 44 * uy, "核心排名内容", false),
       ];
-
-      if (safeArea.interactiveRect) {
-        parts.push(
-          `<rect class="safe-keepout" ${rectAttrs(safeArea.interactiveRect)}></rect>`,
-        );
-      }
-      if (safeArea.interactiveGapRect) {
-        parts.push(
-          `<rect class="safe-keepout-gap" ${rectAttrs(
-            safeArea.interactiveGapRect,
-          )}></rect>`,
-        );
-      }
-
-      const caption = (x, y, text, warn) =>
-        `<text class="safe-caption${warn ? " warn" : ""}" x="${x}" y="${y}">${escapeHtml(
-          text,
-        )}</text>`;
-
-      parts.push(
-        caption(
-          core.x + 8,
-          Math.max(28, core.y - 12),
-          `核心安全区 ${Math.round(safeArea.coreRect.x0)}~${Math.round(
-            safeArea.coreRect.x1,
-          )} × ${Math.round(safeArea.coreRect.y0)}~${Math.round(safeArea.coreRect.y1)}`,
-        ),
-        caption(
-          core.x + 8,
-          core.y + core.height - 12,
-          `标签安全区（含 ${safeArea.contentGapPx}px 间距）`,
-        ),
-        caption(
-          28,
-          Math.max(28, margins.top - 14),
-          `顶部预留 ${safeArea.margins.top}px`,
-        ),
-        caption(
-          28,
-          stage.height - margins.bottom + 40,
-          `底部预留 ${safeArea.margins.bottom}px（${safeArea.descriptionTier} · ${safeArea.descriptionChars} 字符）`,
-        ),
-      );
-
-      if (safeArea.interactiveRect) {
-        const keep = box(safeArea.interactiveRect);
-        parts.push(
-          caption(
-            keep.x + 6,
-            keep.y + 34,
-            `互动栏禁入区 ${Math.round(safeArea.interactiveRect.x0)},${Math.round(
-              safeArea.interactiveRect.y0,
-            )} ${Math.round(
-              safeArea.interactiveRect.x1 - safeArea.interactiveRect.x0,
-            )}×${Math.round(
-              safeArea.interactiveRect.y1 - safeArea.interactiveRect.y0,
-            )}`,
-            true,
-          ),
-        );
-      }
-
       return parts.join("");
     };
 
@@ -1631,24 +1701,28 @@
           "发布描述 → 等级",
           `${safeArea.descriptionChars} 字符 → ${safeArea.descriptionTier}（底部预留 ${
             safeArea.margins.bottom
-          }px，来自${safeArea.bottomSource === "platform" ? "平台覆盖" : "等级配置"}）`,
+          }px，${
+            safeArea.coreMarginsApplied
+              ? "由右侧下边参数指定"
+              : `来自${safeArea.bottomSource === "platform" ? "平台覆盖" : "等级配置"}`
+          }）`,
         ],
         [
-          "四边预留",
+          "四个分区边界（核心框四边）",
           `上 ${safeArea.margins.top} / 下 ${safeArea.margins.bottom} / 左 ${
             safeArea.margins.left
           } / 右 ${safeArea.margins.right}（间距 ${safeArea.contentGapPx}px）`,
         ],
-        ["核心安全区", rect(safeArea.coreRect)],
-        ["标签安全区", rect(safeArea.labelRect)],
-        ["地图底图可用区", rect(safeArea.mapRect)],
+        ["中间核心内容区（也是取景矩形）", rect(safeArea.coreRect)],
         [
-          "互动栏禁入区",
+          "右侧互动区（派生量）",
           safeArea.interactiveRect ? rect(safeArea.interactiveRect) : "未配置",
         ],
         [
           "参数来源",
-          `${safeArea.provenance === "initial-estimate" ? "工程初始估值（非平台官方规范）" : safeArea.provenance}`,
+          safeArea.coreMarginsApplied
+            ? "预览图右侧手动调整四边 · 预览与成片同源"
+            : `${safeArea.provenance === "initial-estimate" ? "工程初始估值（非平台官方规范）" : safeArea.provenance}`,
         ],
       ];
 
@@ -1781,7 +1855,10 @@
     const describeIds = (ids) =>
       ids.map((id) => `${id}${provinceNames[id] ? ` ${provinceNames[id]}` : ""}`).join("、");
 
-    const drawFramingPreview = ({ viewport, introViewport, paths, provinces, audit, safeArea, labelAudit }) => {
+    /** 取景矩形 = 核心框，四边由预览图右侧那一组参数控制；预览与成片同源。 */
+
+    const drawFramingPreview = (payload) => {
+      const { viewport, introViewport, paths, provinces, audit, safeArea, labelAudit } = payload;
       provinceNames = Object.fromEntries(
         paths.map((item) => [item.id, item.name || ""]),
       );
@@ -1792,8 +1869,6 @@
       loadProvinceTable(provinces);
       renderAuditHints();
 
-      const kept = new Set(viewport.keptIds);
-      const dropped = new Set(viewport.droppedIds);
       // 名次 → 填充色：预览图必须画出和成片一样的橙/绿分布，否则「取景预览」
       // 只能看形状，看不出配色。id 统一大写再匹配（GeoJSON 与数据表都是 TH-xx）。
       const rankById = new Map(
@@ -1802,42 +1877,58 @@
           Number(row.rank),
         ]),
       );
+      // 只要在排名表里就按名次着色，和成片口径一致：取景框内外都不改变填充
+      // 与描边。白色只代表「未上榜」，出框与否不在这里做视觉区分（要看覆盖
+      // 情况有右侧参数表的「覆盖排名区域」和「画面外区域」两行）。
       const shapes = paths
         .map(({ id, d }) => {
-          if (kept.has(id)) {
-            const fill = rankFill(rankById.get(String(id).trim().toUpperCase()));
-            return `<path class="province lit" d="${d}" style="fill:${fill}"></path>`;
+          const rank = rankById.get(String(id).trim().toUpperCase());
+          if (Number.isFinite(rank)) {
+            return `<path class="province lit" d="${d}" style="fill:${rankFill(
+              rank,
+            )}"></path>`;
           }
-          const className = dropped.has(id)
-            ? "province off"
-            : "province";
-          return `<path class="${className}" d="${d}"></path>`;
+          return `<path class="province" d="${d}"></path>`;
         })
         .join("");
 
-      const { x0, y0, x1, y1 } = viewport.rect;
       const { width, height } = viewport.stage;
+      // 取景矩形 = 核心区：地图与文字共用一条边界，页面里只有这一个框。
       const band = viewport.labelRect;
       const map = $("#previewMap");
       map.setAttribute("viewBox", `0 0 ${width} ${height}`);
-      // Draw order mirrors the render: provinces, then the title band scrim
-      // (only the header has one — the footer carries no text, so the map runs
-      // to the canvas edge), then the framing window and the label-safe band.
+      // 唯一的核心框常驻显示，不看遮罩开关 —— 右侧四边一改，这个框与取景计算
+      // 同步移动。框画的就是服务端返回的 coreRect（换算到预览 stage），不是
+      // 另造一个矩形：预览与成片看的是同一个值。
+      const coreBox = safeArea
+        ? scaleSafeRect(safeArea.coreRect, safeArea.canvas, viewport.stage)
+        : null;
+      const coreFrame = coreBox
+        ? `<rect class="safe-core" x="${coreBox.x0}" y="${coreBox.y0}" ` +
+          `width="${Math.max(0, coreBox.x1 - coreBox.x0)}" height="${Math.max(0, coreBox.y1 - coreBox.y0)}"></rect>`
+        : "";
+      // 标题浮层与成片同源：文字中心落在核心框顶部往下 1/3 处。原来这里写死
+      // top:10px（预览顶部），看起来像「标题还占一条区」，实际只是网页没跟渲染
+      // 端同步；现在两边都用同一个 1/3 比例，改四边参数标题也跟着走。
+      if (coreBox && viewport.stage.height > 0) {
+        const titleY =
+          coreBox.y0 + (coreBox.y1 - coreBox.y0) / 3;
+        $("#previewTitle").style.top = `${
+          (titleY / viewport.stage.height) * 100
+        }%`;
+      }
+      // 绘制顺序：府形状 → 可选的四分区压暗带 → 核心框（永远最上层）。
+      // 标题遮盖带已删除：渲染端不再有这条带，预览也不该画。
       map.innerHTML =
         shapes +
-        `<rect class="band" x="0" y="0" width="${width}" height="${band.y0}"></rect>` +
-        `<rect class="label-band" x="${band.x0}" y="${band.y0}" width="${
-          band.x1 - band.x0
-        }" height="${band.y1 - band.y0}"></rect>` +
-        `<rect class="frame" x="${x0}" y="${y0}" width="${x1 - x0}" height="${
-          y1 - y0
-        }"></rect>` +
-        `<text class="band-label" x="28" y="${band.y0 - 16}">标题区（地图从这条线以下开始）</text>` +
-        `<text class="band-label" x="28" y="${band.y1 + 34}">页脚区（地图在这条线以上结束，无遮罩）</text>` +
         // 安全区遮罩只在这里（网页预览）出现，且只有开关打开时才画。
         (safeAreaPreviewEnabled() && safeArea
           ? safeAreaOverlaySvg(safeArea, viewport.stage)
-          : "");
+          : "") +
+        coreFrame;
+
+      // 未手动接管时，把服务端当前生效的四边回填到右侧输入框。
+      syncCoreMarginsFromSafeArea(safeArea);
 
       const platformNote = safeArea
         ? `；平台 ${safeArea.platformLabel}（${safeArea.descriptionTier} 描述，底部预留 ${
@@ -1855,9 +1946,10 @@
             : `（开局 0.5s 后由全图 zoom ${Number(
                 introViewport?.zoom ?? viewport.zoom,
               ).toFixed(2)} 推进到此，第一个名次念完镜头停住，之后全片不动）`
-        }；地图横向铺满，上下避开标题区与页脚区（` +
-        `底部留白 ${viewport.stage.height - band.y1}px，抖音底部文字不会压住区域），` +
-        `浅蓝色为标题遮盖带，虚线为取景框，点线为浮动标签安全区` +
+        }；地图完整使用整个核心框（标题是浮层，覆盖在核心框顶部往下 1/3 处，随开场白淡出），` +
+        `核心框下沿距画面底部 ${viewport.stage.height - band.y1}px 留给抖音账号与描述；` +
+        `橙红实线是唯一的核心框（四边在预览图右侧调整），` +
+        `安全区遮罩打开后叠加四分区压暗带` +
         platformNote;
       $("#framingInfo").innerHTML = renderFramingInfo(viewport, introViewport);
       renderSafeAreaInfo(safeArea, labelAudit);
@@ -1873,8 +1965,10 @@
           body: JSON.stringify({
             rankings: data,
             framing: framingState(),
-            // 平台与发布描述决定安全区，进而决定取景视野与标签避让。
+            // 平台与发布描述决定四分区；coreMargins 是唯一一组可调参数
+            // （核心框四条边），手动接管时才带上，预览与成片取值完全相同。
             ...safeAreaState(),
+            coreMargins: coreMarginsState(),
           }),
         });
 
@@ -2523,6 +2617,22 @@
       },
     );
 
+    // 核心框四边：任一输入框改动即整体接管，四个当前值一起送去预览与成片；
+    // 重置按钮清除接管，回到平台配置 + 描述分档的自动派生值。
+    Object.values(CORE_MARGIN_INPUTS).forEach((selector) => {
+      ["change", "input"].forEach((eventName) => {
+        $(selector).addEventListener(eventName, () => {
+          coreMarginsOverridden = true;
+          syncCoreMarginsStateLabel();
+          scheduleFramingPreview();
+        });
+      });
+    });
+    $("#coreMarginsReset").addEventListener("click", () => {
+      resetCoreMargins();
+      scheduleFramingPreview();
+    });
+
     $("#title").addEventListener("input", (event) => {
       $("#previewTitle").textContent = event.target.value;
     });
@@ -2642,6 +2752,8 @@
           // 发布平台 + 发布描述（安全区）。描述只用来选 short/medium/long 档；
           // 视频内部文字与动画完全不变，成片也不含调试遮罩。
           ...safeAreaState(),
+          // 与预览请求完全相同的一组核心框四边，MP4 用同一个矩形构图。
+          coreMargins: coreMarginsState(),
           rankings: data,
         };
 

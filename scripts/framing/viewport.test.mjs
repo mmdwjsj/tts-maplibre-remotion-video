@@ -40,7 +40,7 @@ const view = (provinceIds, options) =>
   resolveViewport(geojson, provinceIds, options, MAP_STAGE);
 
 /** 与 resolveViewport.ts 里的 SUBJECT_CENTER_OFFSET_X 保持一致。 */
-const SUBJECT_CENTER_OFFSET_X = 20;
+const SUBJECT_CENTER_OFFSET_X = 0;
 
 /** How much bigger the framing is compared to showing the whole country. */
 const zoomRatio = (viewport) => Math.pow(2, viewport.zoom - viewport.referenceZoom);
@@ -486,7 +486,7 @@ test('开场运镜：两端就是「全图」和「取景」两个视口，中�
   // 中点取 zoom 的对数中点（等比推进，观感速度均匀）。
   const half = blendViewport(intro, target, 0.5);
   assert.ok(Math.abs(half.zoom - (intro.zoom + target.zoom) / 2) < 1e-9);
-  // 非相机字段沿用落点视口：取景框、标签安全区不随运镜变化。
+  // 非相机字段沿用落点视口：取景框、标签边界不随运镜变化。
   assert.deepEqual(half.rect, target.rect);
   assert.deepEqual(half.labelRect, target.labelRect);
 
@@ -577,7 +577,7 @@ test('南北长链：排名府中心对齐取景框中心并右移 20px', () => 
     const framed = view(ids, {});
     assert.equal(framed.coveredCount, ids.length, `${name}：排名府必须全部可见`);
 
-    // 排名府联合外框的中心 = 取景框中心 + 20px（容差 3px，只有取整误差）。
+    // 排名府联合外框的中心 = 取景框中心（默认 0px 偏移，容差 3px）。
     const path = geoPath(createProjection(framed));
     const ranked = geojson.features.filter((feature) =>
       ids.includes(feature.properties.provinceId),

@@ -319,7 +319,7 @@ export const placeLabel = ({
       code: "BOUNDS_OVERFLOW",
       penaltyPx: Math.round(bestScore.overflowPx),
       detail:
-        `标签面板越出标签安全区（面板 x ${Math.round(panelRect.x0)}~${Math.round(
+        `标签面板越出中间核心内容区（面板 x ${Math.round(panelRect.x0)}~${Math.round(
           panelRect.x1,
         )}, y ${Math.round(panelRect.y0)}~${Math.round(panelRect.y1)}；` +
         `安全区 x ${Math.round(panelBounds.x0)}~${Math.round(panelBounds.x1)}, ` +
@@ -338,7 +338,7 @@ export const placeLabel = ({
   };
 };
 
-/** 安全区审计用：面板是否完整落在标签安全区内。 */
+/** 安全区审计用：面板是否完整落在中间核心内容区内。 */
 export const labelFitsBounds = (
   placement: LabelPlacement,
   bounds: LabelRect,
