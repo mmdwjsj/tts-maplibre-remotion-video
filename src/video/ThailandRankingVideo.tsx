@@ -9,7 +9,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import geoData from "../data/thailand-provinces.geo.json";
-import type { ProjectData, ThailandGeoJson } from "../types";
+import type { ProjectData, RankingDatum, ThailandGeoJson } from "../types";
 import {
   buildTimeline,
   findRevealedSegmentIndex,
@@ -82,14 +82,22 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   const revealedIndex = findRevealedSegmentIndex(timeline.segments, frame);
   const activeSegment =
     revealedIndex === -1 ? undefined : timeline.segments[revealedIndex];
-  const visibleIds = useMemo(
-    () =>
-      timeline.segments
-        .slice(0, revealedIndex + 1)
-        .map((segment) => segment.datum?.provinceId)
-        .filter((provinceId): provinceId is string => Boolean(provinceId)),
-    [revealedIndex, timeline.segments],
-  );
+  // Provinces already lit, each with the frame its name started being voiced.
+  // The list only grows: when the narration moves on, the previous readout stays
+  // on the map instead of disappearing, so the picture accumulates the ranking.
+  const revealed = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { datum: RankingDatum; revealAt: number }[] = [];
+    for (const segment of timeline.segments) {
+      const datum = segment.datum;
+      if (!datum || segment.revealAt > frame) continue;
+      const key = String(datum.provinceId).trim().toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ datum, revealAt: segment.revealAt });
+    }
+    return out;
+  }, [frame, timeline.segments]);
   // Platform UI safe area. The server resolves it once per job (from the
   // platform config plus the publish-description tier) and writes it into the
   // render props, so the MP4 uses exactly the rectangles the preview showed.
@@ -262,7 +270,7 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           <ThailandMap
             geojson={geoData as ThailandGeoJson}
             project={project}
-            visibleIds={visibleIds}
+            revealed={revealed}
             active={activeSegment?.datum}
             revealStart={activeSegment?.revealAt ?? 0}
             framing={framing}

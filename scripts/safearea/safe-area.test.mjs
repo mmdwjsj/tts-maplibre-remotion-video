@@ -33,6 +33,7 @@ import {
   selectDescriptionTier,
 } from '../../src/safearea/safeArea.ts';
 import {
+  EDGE_MARGIN,
   LABEL_BOX,
   labelFitsBounds,
   placeLabel,
@@ -67,10 +68,16 @@ const overlaps = (a, b) =>
   Math.min(a.x1, b.x1) > Math.max(a.x0, b.x0) &&
   Math.min(a.y1, b.y1) > Math.max(a.y0, b.y0);
 
-const labelInput = (resolution, cx, cy) => ({
-  cx,
-  cy,
-  rect: resolution.mapRect,
+/** 一个府在投影后的包围盒：中心 + 尺寸（默认 160x140，接近真实府尺度）。 */
+const provinceAt = (cx, cy, width = 160, height = 140) => ({
+  x0: cx - width / 2,
+  y0: cy - height / 2,
+  x1: cx + width / 2,
+  y1: cy + height / 2,
+});
+
+const labelInput = (resolution, bounds) => ({
+  bounds,
   panelBounds: resolution.labelRect,
   keepOut: resolution.interactiveGapRect,
 });
@@ -173,38 +180,52 @@ test('场景：描述等级边界可配置，且 short/medium/long 使用各自�
  * 场景 7-9：标签靠边 / 贴底
  * -------------------------------------------------------------------------- */
 
-test('场景：排名标签落在画面最左侧时，面板仍完整留在安全区内', () => {
+test('场景：府贴着核心区最左侧时，文字块被收进核心区且不裁字', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  const placement = placeLabel(labelInput(resolution, 6, 900));
+  const placement = placeLabel(labelInput(resolution, provinceAt(6, 900)));
 
-  assert.equal(placement.conflict, null);
+  assert.equal(placement.conflict, null, placement.conflict?.detail);
   assert.ok(labelFitsBounds(placement, resolution.labelRect));
   assert.ok(placement.panelRect.x0 >= resolution.labelRect.x0);
   assert.ok(placement.panelRect.x1 <= resolution.labelRect.x1);
-  assert.equal(placement.flipped, false);
+  // 靠边时整块贴住核心区左沿（留出 EDGE_MARGIN），不是半个字出画。
+  assert.equal(Math.round(placement.panelRect.x0), resolution.labelRect.x0 + EDGE_MARGIN);
+  // 纵向仍压在府身上：不从府顶溢出到府外的空白里。
+  assert.ok(placement.panelRect.y0 >= provinceAt(6, 900).y0);
+  assert.ok(placement.panelRect.y1 <= provinceAt(6, 900).y1);
 });
 
-test('场景：排名标签落在画面最右侧时，面板被推离右侧互动栏禁入区', () => {
+test('场景：文字块会压到右侧互动栏时，整体左移让开禁入区', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  const placement = placeLabel(labelInput(resolution, resolution.canvas.width - 8, 1000));
+  // 显式给一个互动栏禁入区，不依赖平台右边距的当前默认值 —— 这里测的是
+  // 「让开」这条规则本身，而不是某个平台的具体宽度。
+  const keepOut = {x0: 900, y0: 650, x1: 1080, y1: 1580};
+  const placement = placeLabel({
+    bounds: provinceAt(resolution.canvas.width - 8, 1000),
+    panelBounds: resolution.labelRect,
+    keepOut,
+  });
 
   assert.equal(placement.conflict, null, placement.conflict?.detail);
   assert.ok(labelFitsBounds(placement, resolution.labelRect));
   assert.ok(
-    !overlaps(placement.panelRect, resolution.interactiveGapRect),
-    `面板 ${JSON.stringify(placement.panelRect)} 压住了禁入区 ${JSON.stringify(resolution.interactiveGapRect)}`,
+    !overlaps(placement.panelRect, keepOut),
+    `文字块 ${JSON.stringify(placement.panelRect)} 压住了禁入区 ${JSON.stringify(keepOut)}`,
   );
-  // 面板被推到了禁入区左边。
-  assert.ok(placement.panelRect.x1 <= resolution.interactiveGapRect.x0);
+  // 文字块被推到禁入区左边，并如实记录偏移量。
+  assert.ok(placement.panelRect.x1 <= keepOut.x0);
+  assert.ok(placement.keepOutShiftPx > 0, '应记录为了让开互动栏而左移的像素');
 });
 
-test('场景：排名标签落在底部安全区边缘时，面板不会压进底部预留', () => {
+test('场景：府贴着核心区底部时，文字仍压在府身上、不压进底部预留', () => {
   const resolution = resolveSafeArea(config, {platform: 'douyin', description: 'x'.repeat(260)});
   const bottomEdge = resolution.coreRect.y1;
-  const placement = placeLabel(labelInput(resolution, 540, bottomEdge + 200));
+  const province = provinceAt(540, bottomEdge - 70);
+  const placement = placeLabel(labelInput(resolution, province));
 
-  assert.equal(placement.conflict, null);
+  assert.equal(placement.conflict, null, placement.conflict?.detail);
   assert.ok(labelFitsBounds(placement, resolution.labelRect));
+  assert.ok(placement.panelRect.y0 >= province.y0, '文字块完整落在府顶之下，没有飘到府外');
   assert.ok(placement.panelRect.y1 <= resolution.labelRect.y1);
   assert.ok(
     placement.panelRect.y1 <= resolution.canvas.height - resolution.margins.bottom,
@@ -213,46 +234,82 @@ test('场景：排名标签落在底部安全区边缘时，面板不会压进�
 });
 
 /* -------------------------------------------------------------------------- *
- * 场景：callout 反方向落位 + 不盖住府
+ * 落位规则：压在府的上半部 + 水平中心对齐（第二行府名压在府中心上）
  * -------------------------------------------------------------------------- */
 
-const placeFor = (resolution, cx, cy, province) =>
-  placeLabel({
-    ...labelInput(resolution, cx, cy),
-    focus: {x: resolution.canvas.width / 2, y: resolution.canvas.height / 2},
-    avoid: [province],
-  });
-
-test('场景：府在画面左下时，标签去右上且不压住府', () => {
+test('落位：文字块水平中心 = 府的中心，纵向占住府的上半部', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  // 左下角的一个府（锚点在包围盒中心）。
-  const province = {x0: 100, y0: 1320, x1: 320, y1: 1480};
-  const placement = placeFor(resolution, 210, 1400, province);
+  const province = provinceAt(540, 1000, 300, 320);
+  const placement = placeLabel(labelInput(resolution, province));
 
-  assert.equal(placement.conflict, null, placement.conflict?.detail);
-  assert.ok(labelFitsBounds(placement, resolution.labelRect));
-  // 反方向：右、上（vy=-1，或因安全区钳制退化到水平侧移）。
-  assert.equal(placement.side.hx, 1);
-  assert.ok(placement.side.vy <= 0);
+  const blockCenterX = (placement.panelRect.x0 + placement.panelRect.x1) / 2;
+  assert.equal(Math.round(blockCenterX), Math.round((province.x0 + province.x1) / 2));
+  assert.equal(placement.keepOutShiftPx, 0, '画面中央的府不应被推离中心');
+
+  // 「在府的上面，而不是外面」：文字块整体落在府内部，且占住上半部 ——
+  // 底边不越过府的中心线，顶边不高于府顶（留内边距）。
   assert.ok(
-    !overlaps(placement.panelRect, province),
-    `面板 ${JSON.stringify(placement.panelRect)} 压住了府 ${JSON.stringify(province)}`,
+    placement.panelRect.y0 >= province.y0,
+    `文字块顶 ${placement.panelRect.y0} 应在府顶 ${province.y0} 之下（压在府内）`,
+  );
+  assert.ok(
+    placement.panelRect.y1 <= (province.y0 + province.y1) / 2,
+    `文字块底 ${placement.panelRect.y1} 应不低于府中心线 ${(province.y0 + province.y1) / 2}`,
   );
 });
 
-test('场景：府在画面右上时，标签去左下且不压住府', () => {
+test('落位：府太矮时文字块从府内上沿起排，仍然压着府而不是飘到府外', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  const province = {x0: 800, y0: 300, x1: 980, y1: 460};
-  const placement = placeFor(resolution, 890, 380, province);
+  // 府高 140 < 文字块高，上半部装不下三行。
+  const province = provinceAt(540, 900, 160, 140);
+  const placement = placeLabel(labelInput(resolution, province));
 
   assert.equal(placement.conflict, null, placement.conflict?.detail);
+  assert.ok(placement.panelRect.y0 >= province.y0, '不能跑到府顶部之上');
+  assert.ok(placement.panelRect.y0 <= province.y1, '文字块起点必须落在府身上');
+  // 府不够高时如实向下越过府底一点，但不会翻到府下方一大截。
+  assert.ok(placement.panelRect.y0 - province.y0 <= LABEL_BOX.height);
+});
+
+test('落位：府贴着核心区上沿时，文字块收进核心区而不是出画', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  // 府的上边几乎贴着核心区顶边，府内部放不下整块文字。
+  const province = {x0: 460, y0: resolution.coreRect.y0 + 20, x1: 620, y1: 220};
+  const placement = placeLabel(labelInput(resolution, province));
+
   assert.ok(labelFitsBounds(placement, resolution.labelRect));
-  assert.equal(placement.side.hx, -1);
-  assert.ok(placement.side.vy >= 0);
+  assert.ok(placement.panelRect.y0 >= resolution.labelRect.y0, '不出核心区上沿');
+  assert.ok(placement.panelRect.y0 >= province.y0, '起点仍在府内，不掉到府外');
+});
+
+test('落位：读数常驻后相邻小府撞车，后来的标签向下让位且互不重叠', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  // 模拟春武里 / 罗勇这种相邻小府：默认位几乎重叠。
+  const first = provinceAt(760, 1020, 150, 120);
+  const second = provinceAt(880, 1060, 150, 120);
+  const firstPlacement = placeLabel(labelInput(resolution, first));
+  const secondPlacement = placeLabel({
+    ...labelInput(resolution, second),
+    occupied: [firstPlacement.panelRect],
+  });
+
   assert.ok(
-    !overlaps(placement.panelRect, province),
-    `面板 ${JSON.stringify(placement.panelRect)} 压住了府 ${JSON.stringify(province)}`,
+    !overlaps(secondPlacement.panelRect, firstPlacement.panelRect),
+    `第二个读数 ${JSON.stringify(secondPlacement.panelRect)} 仍压在第一个 ${JSON.stringify(firstPlacement.panelRect)} 上`,
   );
+  // 让位方向是向下（退到府下半部或继续下移），不会向上跳出府顶。
+  assert.ok(secondPlacement.panelRect.y0 >= firstPlacement.panelRect.y0);
+  // 仍然压在第二个府身上或紧贴其下方，没有甩到画面另一头。
+  assert.ok(secondPlacement.panelRect.y0 >= second.y0);
+  assert.ok(secondPlacement.panelRect.y0 <= second.y1 + LABEL_BOX.height);
+});
+
+test('落位：没有占用冲突时行为与旧规则一致（不受 occupied 空列表影响）', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  const province = provinceAt(540, 1000, 300, 320);
+  const withOccupied = placeLabel({...labelInput(resolution, province), occupied: []});
+  const without = placeLabel(labelInput(resolution, province));
+  assert.deepEqual(withOccupied.panelRect, without.panelRect);
 });
 
 /* -------------------------------------------------------------------------- *
@@ -694,7 +751,8 @@ test('配置文件按 TTS 同一套约定加载，坏配置只降级不改行为
 
 test('标签盒子尺寸与落位结果自洽', () => {
   const resolution = resolveSafeArea(config, {description: 'x'.repeat(10)});
-  const placement = placeLabel(labelInput(resolution, 700, 800));
+  const province = provinceAt(700, 800);
+  const placement = placeLabel(labelInput(resolution, province));
   assert.equal(
     Math.round(placement.panelRect.x1 - placement.panelRect.x0),
     LABEL_BOX.width,
@@ -703,7 +761,7 @@ test('标签盒子尺寸与落位结果自洽', () => {
     Math.round(placement.panelRect.y1 - placement.panelRect.y0),
     LABEL_BOX.height,
   );
-  // 引线起点贴在锚点旁边。
+  // anchor 是府的中心，文字块的水平基准跟着它走。
   assert.equal(Math.round(placement.anchor[0]), 700);
   assert.equal(Math.round(placement.anchor[1]), 800);
 });

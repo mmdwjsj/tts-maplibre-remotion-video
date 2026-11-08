@@ -342,29 +342,31 @@ const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
 
   if (labelPlacementModule) {
     const diagnostics = viewport.diagnostics ?? [];
+    // Every revealed province keeps its readout on screen, so the audit mirrors
+    // the render's placement order: each readout sees the rects already taken
+    // and steps down when a neighbour's block would collide with it.
+    const occupied = [];
     for (const diagnostic of diagnostics) {
-      // Same placement rule the map component uses: the panel avoids the
-      // province itself, treats the other ranked provinces as soft obstacles and
-      // walks away from the canvas centre — otherwise this audit would check a
-      // layout the render never produces.
+      // Same placement rule the map component uses: the readout sits on the
+      // province itself, centred on it, and only moves when a core-rect edge or
+      // the right-hand action rail would clip it — otherwise this audit would
+      // check a layout the render never produces.
       const own = diagnostic.bboxPx;
       const toRect = (bbox) => ({x0: bbox[0][0], y0: bbox[0][1], x1: bbox[1][0], y1: bbox[1][1]});
       const placement = labelPlacementModule.placeLabel({
-        cx: diagnostic.center[0],
-        cy: diagnostic.center[1],
-        rect: viewport.mapRect ?? viewport.rect,
+        bounds: toRect(own),
         panelBounds: viewport.labelRect,
         keepOut: viewport.keepOutRect ?? null,
-        focus: {x: viewport.stage.width / 2, y: viewport.stage.height / 2},
-        avoid: [toRect(own)],
-        obstacles: diagnostics
-          .filter((other) => other.provinceId !== diagnostic.provinceId)
-          .map((other) => toRect(other.bboxPx)),
+        occupied,
       });
+      occupied.push(placement.panelRect);
       elements.push({
         id: `label:${diagnostic.provinceId}`,
         component: "ThailandMap/placeLabel",
         rect: placement.panelRect,
+        // `panel`, not `text`: every revealed province keeps its readout on
+        // screen now, so two readouts really can collide in the render — the
+        // pairwise overlap check must see them instead of skipping them.
         kind: "panel",
         conflict: placement.conflict,
       });
