@@ -38,6 +38,7 @@ import {
   labelFitsBounds,
   placeLabel,
 } from '../../src/video/layout/labelPlacement.ts';
+import {theme} from '../../src/config/theme.ts';
 import {
   MAP_OVERLAY_BANDS,
   MAP_SAFE_INSET,
@@ -1074,4 +1075,46 @@ test('默认参数：四边 100/150/10/10、主体右移 0px、取景远近 100%
   assert.ok(/Number\.isFinite\(zoomPercent\)\s*\?\s*zoomPercent\s*:\s*100/.test(html));
   assert.ok(/zoomDistance:\s*1,/.test(viewportSource));
   assert.equal(resolveViewport(geojson, EAST, {}, MAP_STAGE).zoomDistance, 1);
+});
+
+/* -------------------------------------------------------------------------- *
+ * 配色：预览与成片同一份色阶，且名次越靠前越深
+ * -------------------------------------------------------------------------- */
+
+test('配色：预览页的 RANK_FILL 与 theme.rankFill 逐项相同', () => {
+  const html = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../public/index.html'),
+    'utf8',
+  );
+  const match = /const RANK_FILL = \[([^\]]+)\]/.exec(html);
+  assert.ok(match, '预览页应保留 RANK_FILL 色阶常量（预览与成片必须同源）');
+  const preview = match[1]
+    .split(',')
+    .map((value) => value.trim().replace(/["']/g, '').toUpperCase())
+    .filter(Boolean);
+  assert.deepEqual(preview, theme.rankFill.map((value) => value.toUpperCase()));
+});
+
+test('配色：名次越靠前填色越深，且五档落在同一橙色系', () => {
+  const luminance = (hex) => {
+    const value = Number.parseInt(hex.slice(1), 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  for (let i = 1; i < theme.rankFill.length; i += 1) {
+    assert.ok(
+      luminance(theme.rankFill[i]) > luminance(theme.rankFill[i - 1]),
+      `第 ${i + 1} 名 (${theme.rankFill[i]}) 应比第 ${i} 名 (${theme.rankFill[i - 1]}) 更浅`,
+    );
+  }
+  // 同一橙色系：红分量最高、蓝分量最低，不与绿色/冷色混用。
+  for (const hex of theme.rankFill) {
+    const value = Number.parseInt(hex.slice(1), 16);
+    const r = (value >> 16) & 255;
+    const g = (value >> 8) & 255;
+    const b = value & 255;
+    assert.ok(r > g && g > b, `${hex} 不是橙色系（需满足 R > G > B）`);
+  }
 });

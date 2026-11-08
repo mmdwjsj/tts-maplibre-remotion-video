@@ -484,8 +484,8 @@
     }
 
     /* 陆地配色对齐 src/config/theme.ts（B8）：
-       未上榜府 = 纯白陆地 + 灰色细界，上榜府按名次取色（前 3 橙、4-5 绿），
-       填充色由脚本内联写入 —— 与 theme.rankFill 是同一套色值。 */
+       未上榜府 = 纯白陆地 + 灰色细界，上榜府按名次取色（单一橙色系，
+       名次越靠前越深），填充色由脚本内联写入 —— 与 theme.rankFill 同一套色值。 */
     .map path {
       fill: #ffffff;
       stroke: #8c9ba5;
@@ -1456,13 +1456,13 @@
     let previewTimer = null;
     let provinceNames = {};
     /**
-     * 名次色阶 —— 与 `src/config/theme.ts` 的 `rankFill` 逐项对应（前 3 名橙、
-     * 第 4-5 名绿）。改配色时两边必须一起改，否则预览图与成片会不一致。
+     * 名次色阶 —— 与 `src/config/theme.ts` 的 `rankFill` 逐项对应（单一橙色系，
+     * 名次越靠前越深）。改配色时两边必须一起改，否则预览图与成片会不一致。
      */
-    const RANK_FILL = ["#E0661A", "#F28C28", "#F7AE6A", "#3F7A4E", "#6FA377"];
+    const RANK_FILL = ["#A8400A", "#C5570F", "#E06E17", "#F08838", "#F7A35F"];
     const rankFill = (rank) => {
       // 名次缺失或超出色阶长度时退回末位色，绝不返回 undefined（会变成黑块）。
-      if (!Number.isFinite(rank)) return "#6FA377";
+      if (!Number.isFinite(rank)) return "#F7A35F";
       return RANK_FILL[Math.min(Math.max(rank, 1), RANK_FILL.length) - 1];
     };
     /**
