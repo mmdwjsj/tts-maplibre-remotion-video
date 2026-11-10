@@ -10,6 +10,8 @@ import test from 'node:test';
 import {
   buildTimeline,
   CAMERA_START_DELAY_SECONDS,
+  FINALE_PAUSE_SECONDS,
+  finaleHoldSeconds,
   findRevealedSegmentIndex,
 } from '../../src/timeline/buildTimeline.ts';
 
@@ -237,5 +239,61 @@ test('同一份输入重复调用结果一致（缓存不改变语义）', () =>
   assert.deepEqual(
     first.segments.map((segment) => segment.revealAt),
     second.segments.map((segment) => segment.revealAt),
+  );
+});
+
+/* -------------------------------------------------------------------------- *
+ * 片尾停留：完整榜单只在最后一句念完才凑齐，必须给够读数时间
+ * -------------------------------------------------------------------------- */
+
+test('片尾停留：5 个府给 4.5 秒，随府数增长并封顶 8 秒', () => {
+  assert.equal(finaleHoldSeconds(5), 4.5);
+  // 单调递增：府越多、榜单越密，需要看的时间越长。
+  let previous = 0;
+  for (const count of [1, 3, 5, 8, 12, 20]) {
+    const seconds = finaleHoldSeconds(count);
+    assert.ok(seconds > previous, `${count} 个府 (${seconds}s) 应比上一档更长`);
+    previous = seconds;
+  }
+  // 封顶：府数再多也不会拖成没完没了的尾巴。
+  assert.equal(finaleHoldSeconds(50), 8);
+  // 非法输入退化成最短一档，不产生 NaN 时长。
+  assert.ok(Number.isFinite(finaleHoldSeconds(0)));
+  assert.ok(Number.isFinite(finaleHoldSeconds(Number.NaN)));
+});
+
+test('片尾停留：真的写进时间轴，末段是「全部读数一起展示」的窗口', () => {
+  const withHold = buildTimeline(project({finalHoldDuration: finaleHoldSeconds(5)}));
+  const noHold = buildTimeline(project({finalHoldDuration: 0}));
+  const window = withHold.totalFrames - withHold.finalStart;
+  assert.ok(
+    window >= 4.5 * FPS - 1,
+    `片尾完整榜单窗口 ${window} 帧应不少于 4.5 秒`,
+  );
+  // 停留是加在最后一段之后的，不会挤掉任何解说。
+  assert.equal(withHold.finalStart, noHold.finalStart);
+  assert.equal(withHold.segments.length, noHold.segments.length);
+});
+
+test('片尾节奏：最后一个读数淡出后先空一拍，完整榜单再回来', () => {
+  const pauseFrames = Math.round(FINALE_PAUSE_SECONDS * FPS);
+  const timeline = buildTimeline(project({finalHoldDuration: finaleHoldSeconds(5)}));
+
+  // 终场入场点 = 最后一句结束 + 静默间隔，不能同一帧起跳（否则「啪一下没了
+  // 又啪一下回来」）。
+  assert.equal(timeline.finaleAt - timeline.finalStart, pauseFrames);
+  assert.ok(pauseFrames >= 12, `空拍 ${pauseFrames} 帧太短，等于没有间隔`);
+
+  // 空拍不吃读数时间：可见的完整榜单窗口 = 片尾总长 − 入场点。
+  const readable = timeline.totalFrames - timeline.finaleAt;
+  assert.ok(
+    readable >= finaleHoldSeconds(5) * FPS - 1,
+    `完整榜单可见 ${readable} 帧，应仍有 4.5 秒读数时间`,
+  );
+  // 最后一个读数在此之前已经淡完，画面确实空着，不是文字还在闪。
+  const lastEnd = Math.max(...timeline.segments.map((segment) => segment.end));
+  assert.ok(
+    timeline.finaleAt >= lastEnd,
+    '终场入场不能早于最后一段解说结束',
   );
 });

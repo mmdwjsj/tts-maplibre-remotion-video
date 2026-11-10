@@ -34,8 +34,16 @@ import {
 } from '../../src/safearea/safeArea.ts';
 import {
   EDGE_MARGIN,
+  LABEL_BASELINE,
   LABEL_BOX,
+  LABEL_CENTRE_RATIO,
+  LABEL_FONT_SIZE,
+  LABEL_NAME_CENTER_Y,
+  MAX_MANUAL_OFFSET_PX,
+  applyLabelOffset,
   labelFitsBounds,
+  normalizeLabelOffset,
+  normalizeLabelOffsetMap,
   placeLabel,
 } from '../../src/video/layout/labelPlacement.ts';
 import {theme} from '../../src/config/theme.ts';
@@ -191,9 +199,8 @@ test('场景：府贴着核心区最左侧时，文字块被收进核心区且�
   assert.ok(placement.panelRect.x1 <= resolution.labelRect.x1);
   // 靠边时整块贴住核心区左沿（留出 EDGE_MARGIN），不是半个字出画。
   assert.equal(Math.round(placement.panelRect.x0), resolution.labelRect.x0 + EDGE_MARGIN);
-  // 纵向仍压在府身上：不从府顶溢出到府外的空白里。
-  assert.ok(placement.panelRect.y0 >= provinceAt(6, 900).y0);
-  assert.ok(placement.panelRect.y1 <= provinceAt(6, 900).y1);
+  // 横向被收进来，纵向仍严格压住府的中心（府名那一行的正中）。
+  assert.ok(Math.abs(placement.panelRect.y0 + LABEL_NAME_CENTER_Y - 900) < 0.5);
 });
 
 test('场景：文字块会压到右侧互动栏时，整体左移让开禁入区', () => {
@@ -235,10 +242,10 @@ test('场景：府贴着核心区底部时，文字仍压在府身上、不压�
 });
 
 /* -------------------------------------------------------------------------- *
- * 落位规则：压在府的上半部 + 水平中心对齐（第二行府名压在府中心上）
+ * 落位规则：水平中心对齐 + 第二行府名的中心 = 府的中心
  * -------------------------------------------------------------------------- */
 
-test('落位：文字块水平中心 = 府的中心，纵向占住府的上半部', () => {
+test('落位：水平中心 = 府的中心，纵向第二行府名的中心也压在府中心上', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
   const province = provinceAt(540, 1000, 300, 320);
   const placement = placeLabel(labelInput(resolution, province));
@@ -247,43 +254,48 @@ test('落位：文字块水平中心 = 府的中心，纵向占住府的上半�
   assert.equal(Math.round(blockCenterX), Math.round((province.x0 + province.x1) / 2));
   assert.equal(placement.keepOutShiftPx, 0, '画面中央的府不应被推离中心');
 
-  // 「在府的上面，而不是外面」：文字块整体落在府内部，且占住上半部 ——
-  // 底边不越过府的中心线，顶边不高于府顶（留内边距）。
+  // 唯一的纵向铁律：府名那一行的视觉中心 = 府中心。
+  const provinceCentreY = (province.y0 + province.y1) / 2;
+  const nameCentreY = placement.panelRect.y0 + LABEL_NAME_CENTER_Y;
   assert.ok(
-    placement.panelRect.y0 >= province.y0,
-    `文字块顶 ${placement.panelRect.y0} 应在府顶 ${province.y0} 之下（压在府内）`,
-  );
-  assert.ok(
-    placement.panelRect.y1 <= (province.y0 + province.y1) / 2,
-    `文字块底 ${placement.panelRect.y1} 应不低于府中心线 ${(province.y0 + province.y1) / 2}`,
+    Math.abs(nameCentreY - provinceCentreY) < 0.5,
+    `府名中心 ${nameCentreY} 应压住府中心 ${provinceCentreY}`,
   );
 });
 
-test('落位：府太矮时文字块从府内上沿起排，仍然压着府而不是飘到府外', () => {
+test('落位：府比文字块还矮时，块对称地跨在府身上，不会整体掉到府下方', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  // 府高 140 < 文字块高，上半部装不下三行。
-  const province = provinceAt(540, 900, 160, 140);
+  // 曼谷的真实尺度：83 x 56px，比 102px 高的三行文字还矮 —— 旧规则会在这种
+  // 情况下把整块往下推，看起来就像数据掉进海面。
+  const province = provinceAt(632, 955, 83, 56);
   const placement = placeLabel(labelInput(resolution, province));
 
   assert.equal(placement.conflict, null, placement.conflict?.detail);
-  assert.ok(placement.panelRect.y0 >= province.y0, '不能跑到府顶部之上');
-  assert.ok(placement.panelRect.y0 <= province.y1, '文字块起点必须落在府身上');
-  // 府不够高时如实向下越过府底一点，但不会翻到府下方一大截。
-  assert.ok(placement.panelRect.y0 - province.y0 <= LABEL_BOX.height);
+  const centreY = 955;
+  const nameCentreY = placement.panelRect.y0 + LABEL_NAME_CENTER_Y;
+  assert.ok(Math.abs(nameCentreY - centreY) < 0.5, '府名中心仍严格压在府中心上');
+  // 装不下就上下对称溢出，而不是单边往下溢。
+  const above = centreY - placement.panelRect.y0;
+  const below = placement.panelRect.y1 - centreY;
+  assert.ok(Math.abs(above - below) < LABEL_BOX.height, `溢出应为对称（上 ${above} / 下 ${below}）`);
+  assert.ok(placement.panelRect.y1 - province.y1 <= LABEL_BOX.height / 2 + 1, '块底不会甩到府下方一大截');
 });
 
 test('落位：府贴着核心区上沿时，文字块收进核心区而不是出画', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
-  // 府的上边几乎贴着核心区顶边，府内部放不下整块文字。
-  const province = {x0: 460, y0: resolution.coreRect.y0 + 20, x1: 620, y1: 220};
+  // 府的上边几乎贴着核心区顶边，府中心 − 55 已经落到核心区之外。
+  const province = {x0: 460, y0: resolution.coreRect.y0 + 10, x1: 620, y1: resolution.coreRect.y0 + 80};
   const placement = placeLabel(labelInput(resolution, province));
 
   assert.ok(labelFitsBounds(placement, resolution.labelRect));
-  assert.ok(placement.panelRect.y0 >= resolution.labelRect.y0, '不出核心区上沿');
-  assert.ok(placement.panelRect.y0 >= province.y0, '起点仍在府内，不掉到府外');
+  assert.equal(
+    Math.round(placement.panelRect.y0),
+    Math.round(resolution.labelRect.y0),
+    '贴顶时整块被收进核心区上沿',
+  );
 });
 
-test('落位：读数常驻后相邻小府撞车，后来的标签向下让位且互不重叠', () => {
+test('落位：读数常驻后相邻小府撞车，后来的标签让位且互不重叠', () => {
   const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
   // 模拟春武里 / 罗勇这种相邻小府：默认位几乎重叠。
   const first = provinceAt(760, 1020, 150, 120);
@@ -298,11 +310,31 @@ test('落位：读数常驻后相邻小府撞车，后来的标签向下让位�
     !overlaps(secondPlacement.panelRect, firstPlacement.panelRect),
     `第二个读数 ${JSON.stringify(secondPlacement.panelRect)} 仍压在第一个 ${JSON.stringify(firstPlacement.panelRect)} 上`,
   );
-  // 让位方向是向下（退到府下半部或继续下移），不会向上跳出府顶。
-  assert.ok(secondPlacement.panelRect.y0 >= firstPlacement.panelRect.y0);
-  // 仍然压在第二个府身上或紧贴其下方，没有甩到画面另一头。
+  // 让位有界：上下各一个文字块高度以内，不再无限往下平移。
+  const anchoredY = (second.y0 + second.y1) / 2 - LABEL_NAME_CENTER_Y;
+  const shift = Math.abs(secondPlacement.panelRect.y0 - anchoredY);
+  assert.ok(shift <= LABEL_BOX.height + 0.5, `让位位移 ${shift}px 超出上限 ${LABEL_BOX.height}px`);
+  // 让位后仍然贴着第二个府，没有甩到画面另一头。
   assert.ok(secondPlacement.panelRect.y0 >= second.y0);
   assert.ok(secondPlacement.panelRect.y0 <= second.y1 + LABEL_BOX.height);
+});
+
+test('落位：让不开时保持严格对齐（对齐优先于避让），残余重叠交给审计', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  // 上下左右都被占满：任何位移都撞车，此时必须回到「府名中心 = 府中心」。
+  const province = provinceAt(540, 1000, 200, 160);
+  const occupied = [
+    {x0: 300, y0: 700, x1: 780, y1: 900},
+    {x0: 300, y0: 901, x1: 780, y1: 1100},
+    {x0: 300, y0: 1101, x1: 780, y1: 1300},
+  ];
+  const placement = placeLabel({...labelInput(resolution, province), occupied});
+
+  const nameCentreY = placement.panelRect.y0 + LABEL_NAME_CENTER_Y;
+  assert.ok(
+    Math.abs(nameCentreY - 1000) <= LABEL_BOX.height,
+    `对齐最多被让位推移一个文字块高度（实际 ${nameCentreY - 1000}px）`,
+  );
 });
 
 test('落位：没有占用冲突时行为与旧规则一致（不受 occupied 空列表影响）', () => {
@@ -647,6 +679,55 @@ test('取景矩形恒等于核心区：不同平台与描述档位都只有一�
   assert.deepEqual(view.mapRect, short.coreRect);
   assert.equal(view.coverage, 1);
   assert.deepEqual(view.droppedIds, []);
+});
+
+test('真实排名数据：第 1 名曼谷的读数压在府中心上，不再掉到府下方的海面', () => {
+  const rankings = JSON.parse(
+    fs.readFileSync(path.join(root, 'public', 'data', 'rankings.json'), 'utf8'),
+  );
+  const resolution = resolveSafeArea(config, {platform: 'tiktok'});
+  const view = resolveViewport(geojson, rankings.map((row) => row.provinceId), {}, MAP_STAGE, {
+    mapRect: resolution.mapRect,
+    labelRect: resolution.labelRect,
+    keepOutRect: resolution.interactiveGapRect,
+  });
+
+  // 与渲染端同一套顺序：按名次落位（解说倒序 5→1，但布局顺序恒为 1→5）。
+  const occupied = [];
+  const placed = new Map();
+  for (const diagnostic of [...view.diagnostics].sort((a, b) => a.order - b.order)) {
+    const [[x0, y0], [x1, y1]] = diagnostic.bboxPx;
+    const placement = placeLabel({
+      bounds: {x0, y0, x1, y1},
+      panelBounds: view.labelRect,
+      keepOut: view.keepOutRect ?? null,
+      occupied,
+    });
+    occupied.push(placement.panelRect);
+    placed.set(diagnostic.provinceId, {placement, bbox: diagnostic.bboxPx});
+  }
+
+  // 曼谷只有 83x56px，比三行文字块（102px）还矮 —— 曾经整块被推到府中心以下。
+  const bangkok = placed.get('TH-10');
+  assert.ok(bangkok, '第 1 名曼谷必须参与落位');
+  const centreY = (bangkok.bbox[0][1] + bangkok.bbox[1][1]) / 2;
+  assert.ok(
+    Math.abs(bangkok.placement.panelRect.y0 + LABEL_NAME_CENTER_Y - centreY) < 0.5,
+    `曼谷的府名中心应压在府中心 ${centreY} 上`,
+  );
+  assert.ok(
+    bangkok.placement.panelRect.y1 - bangkok.bbox[1][1] <= LABEL_BOX.height / 2,
+    '曼谷的块底最多溢出半个块高，不再整块挂到府下方的海面',
+  );
+
+  // 每个府最多被让位推移一个文字块高度，读数不会飘到画面另一头。
+  for (const [provinceId, {placement, bbox}] of placed) {
+    const anchorY = (bbox[0][1] + bbox[1][1]) / 2 - LABEL_NAME_CENTER_Y;
+    assert.ok(
+      Math.abs(placement.panelRect.y0 - anchorY) <= LABEL_BOX.height + 0.5,
+      `${provinceId} 的让位位移超出上限`,
+    );
+  }
 });
 
 test('不传安全区时取景行为与原来一致（向后兼容）', () => {
@@ -1117,4 +1198,208 @@ test('配色：名次越靠前填色越深，且五档落在同一橙色系', ()
     const b = value & 255;
     assert.ok(r > g && g > b, `${hex} 不是橙色系（需满足 R > G > B）`);
   }
+});
+
+/* -------------------------------------------------------------------------- *
+ * 排版与文案：预览与成片共用一份标尺，第一行是 NO.
+ * -------------------------------------------------------------------------- */
+
+test('排版：府名行的中心由基线反推，与字号标尺同源', () => {
+  assert.ok(
+    Math.abs(
+      LABEL_NAME_CENTER_Y -
+        (LABEL_BASELINE.name - LABEL_FONT_SIZE.name * LABEL_CENTRE_RATIO),
+    ) < 1e-9,
+    '府名中心必须由 LABEL_BASELINE.name 反推，不能手填',
+  );
+  // 行的先后与块高：基线递增，块能容下三行。
+  assert.ok(LABEL_BASELINE.rank < LABEL_BASELINE.name);
+  assert.ok(LABEL_BASELINE.name < LABEL_BASELINE.value);
+  assert.ok(
+    LABEL_BASELINE.value + LABEL_FONT_SIZE.value * 0.3 <= LABEL_BOX.height,
+    '文字块高度要容得下数值行的下伸笔画',
+  );
+});
+
+test('文案：渲染端与预览都用 NO.xx，不再出现 RANK 前缀', () => {
+  const mapSource = fs.readFileSync(
+    path.join(root, 'src', 'video', 'components', 'ThailandMap.tsx'),
+    'utf8',
+  );
+  const serverSource = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  for (const [name, source] of [
+    ['ThailandMap', mapSource],
+    ['web-server', serverSource],
+  ]) {
+    assert.ok(source.includes('NO.'), `${name} 应输出 NO. 前缀`);
+    assert.ok(
+      !/["'`]RANK /.test(source),
+      `${name} 里不应再有写死的 "RANK " 文本`,
+    );
+  }
+  // 字号不许在组件里手写：只能引用共享标尺。
+  assert.ok(
+    !/fontSize="\d+"/.test(mapSource),
+    'ThailandMap 的字号必须来自 LABEL_FONT_SIZE，不能写死数字',
+  );
+});
+
+test('预览图：排名读数由服务端下发的矩形 + 标尺绘制，不是另算一份', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+
+  // 服务端把 labels / labelStyle 一起回给预览页。
+  assert.ok(/labels:\s*rankingLabelsPayload\(/.test(serverSource), '预览响应应带 labels');
+  assert.ok(/labelStyle:\s*labelStyle\(\)/.test(serverSource), '预览响应应带 labelStyle');
+  assert.ok(
+    /placeRankingLabels\(/.test(serverSource) &&
+      /auditSafeArea[\s\S]{0,600}placeRankingLabels\(viewport, labelOffsets\)/.test(
+        serverSource,
+      ),
+    '审计与预览必须共用同一份落位实现',
+  );
+
+  // 预览页照矩形画三行，带白描边，插入到府形状之后。
+  assert.ok(/const labelSvg = \(items, style\)/.test(html), '预览页应有 labelSvg 绘制函数');
+  assert.ok(/labelSvg\(labels, labelStyle\)/.test(html), '预览页应把 labels 画进地图');
+  assert.ok(/paint-order="stroke"/.test(html), '预览读数需要白色描边（halo）');
+  assert.ok(
+    /letter-spacing/.test(html) && /text-anchor="middle"/.test(html),
+    '预览读数要与成片一样居中、带字距',
+  );
+});
+
+/* -------------------------------------------------------------------------- *
+ * 手动微调：预览拖拽 → 生成生效，拖飞了回原位
+ * -------------------------------------------------------------------------- */
+
+test('微调：偏移叠加在自动落位上，且记录下叠加量', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  const province = provinceAt(632, 955, 83, 56);
+  const auto = placeLabel(labelInput(resolution, province));
+  const moved = applyLabelOffset(auto, {dx: 40, dy: -25});
+
+  assert.deepEqual(moved.panelRect, {
+    x0: auto.panelRect.x0 + 40,
+    y0: auto.panelRect.y0 - 25,
+    x1: auto.panelRect.x1 + 40,
+    y1: auto.panelRect.y1 - 25,
+  });
+  assert.deepEqual(moved.manualOffset, {dx: 40, dy: -25});
+  assert.deepEqual(auto.manualOffset, undefined, '自动落位不能被就地改写');
+});
+
+test('微调：拖过界（单轴超上限）直接回落自动落位', () => {
+  const resolution = resolveSafeArea(config, {platform: 'tiktok', description: 'x'.repeat(20)});
+  const province = provinceAt(632, 955, 83, 56);
+  const auto = placeLabel(labelInput(resolution, province));
+
+  // 恰好等于上限：可用。
+  assert.deepEqual(normalizeLabelOffset({dx: MAX_MANUAL_OFFSET_PX, dy: 0}), {
+    dx: MAX_MANUAL_OFFSET_PX,
+    dy: 0,
+  });
+  // 超一点就判否 —— 这就是「拖飞了」的判定线。
+  assert.equal(normalizeLabelOffset({dx: MAX_MANUAL_OFFSET_PX + 1, dy: 0}), null);
+  assert.equal(normalizeLabelOffset({dx: 0, dy: -MAX_MANUAL_OFFSET_PX - 40}), null);
+  assert.equal(normalizeLabelOffset({dx: Number.NaN, dy: 0}), null);
+  assert.equal(normalizeLabelOffset(null), null);
+
+  // 无效偏移交给 applyLabelOffset 时，位置与自动落位逐像素相同。
+  for (const bad of [
+    {dx: MAX_MANUAL_OFFSET_PX + 1, dy: 0},
+    {dx: 0, dy: 9999},
+    {dx: null, dy: 10},
+    {dx: '20', dy: 10},
+  ]) {
+    assert.deepEqual(
+      applyLabelOffset(auto, bad).panelRect,
+      auto.panelRect,
+      `无效偏移 ${JSON.stringify(bad)} 不该改变落位`,
+    );
+  }
+});
+
+test('微调：偏移表规整——键大写、去零位移、丢掉越界项', () => {
+  const map = normalizeLabelOffsetMap({
+    'th-10': {dx: 12.4, dy: -3.6},
+    'TH-20': {dx: 0, dy: 0},
+    'TH-21': {dx: MAX_MANUAL_OFFSET_PX + 10, dy: 0},
+    '': {dx: 5, dy: 5},
+    'TH-50': 'nope',
+  });
+  assert.deepEqual(map, {'TH-10': {dx: 12, dy: -4}});
+  assert.deepEqual(normalizeLabelOffsetMap(undefined), {});
+  assert.deepEqual(normalizeLabelOffsetMap(null), {});
+});
+
+test('微调：渲染端与服务端用同一套偏移规则（不各写一份）', () => {
+  const mapSource = fs.readFileSync(
+    path.join(root, 'src', 'video', 'components', 'ThailandMap.tsx'),
+    'utf8',
+  );
+  const serverSource = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+
+  // 渲染端：normalizeLabelOffsetMap 规整 + applyLabelOffset 叠加，两者都来自共享模块。
+  assert.ok(/normalizeLabelOffsetMap\(project\.labelOffsets\)/.test(mapSource));
+  assert.ok(/applyLabelOffset\(/.test(mapSource));
+
+  // 服务端：同一套函数，预览与生成都带上偏移。
+  assert.ok(/applyLabelOffset\(auto, offsets\[key\]\)/.test(serverSource));
+  assert.ok(/labelOffsets:\s*labelPlacementModule[\s\S]{0,120}normalizeLabelOffsetMap/.test(serverSource));
+  assert.ok(/maxOffset:/.test(serverSource), '拖拽上限随 labelStyle 下发，网页不自己写死');
+
+  // 预览页：拖拽 + 一键复位 + 两个请求都带偏移。
+  assert.ok(/addEventListener\("pointerdown"/.test(html), '预览图应支持拖拽');
+  assert.ok(/dataset\.province/.test(html), '读数分组要带 provinceId 才能记偏移');
+  assert.ok(/resetLabelOffsets/.test(html), '应有「恢复自动落位」按钮');
+  assert.ok(/localStorage\.setItem\(LABEL_OFFSET_KEY/.test(html), '偏移应跨刷新保留');
+  assert.equal(
+    (html.match(/labelOffsets,\s*\n?\s*\}\)/g) || []).length >= 1,
+    true,
+    '预览请求应上送 labelOffsets',
+  );
+  assert.ok(/labelOffsets,\s*\n\s*rankings: data,/.test(html), '生成请求应上送 labelOffsets');
+});
+
+/* -------------------------------------------------------------------------- *
+ * 读数生命周期：解说期间在府上，说完就淡出，全部念完再一起回来。
+ * -------------------------------------------------------------------------- */
+
+test('生命周期：读数只在 [revealAt, hideAt) 显示，全部念完从 allAt 一起回来', () => {
+  const mapSource = fs.readFileSync(
+    path.join(root, 'src', 'video', 'components', 'ThailandMap.tsx'),
+    'utf8',
+  );
+  const videoSource = fs.readFileSync(
+    path.join(root, 'src', 'video', 'ThailandRankingVideo.tsx'),
+    'utf8',
+  );
+
+  // 渲染端：hideAt 窗口 + allAt 终场一起入场，落位仍来自 rank 排序的统一地图。
+  assert.ok(/readouts\.map\(\(\{datum, revealAt, hideAt\}\)/.test(mapSource), '读数要按 revealAt→hideAt 窗口渲染');
+  assert.ok(/inFinale = frame >= allAt/.test(mapSource), '终场一起入场由 allAt 触发');
+  // 终场入场点是「最后一句结束 + 静默一拍」，不是最后一句结束的同一帧：留出
+  // 停顿，读数才不会「啪一下没了又啪一下回来」。
+  assert.ok(
+    /allAt=\{timeline\.finaleAt\}/.test(videoSource),
+    'allAt 应取 timeline.finaleAt（最后一段结束 + FINALE_PAUSE_SECONDS）',
+  );
+  assert.ok(/hideAt: segment\.end/.test(videoSource), 'hideAt = 该府解说段结束帧');
+  // readouts 不过滤当前帧：位置在整份排名上算，读数提前出现时不会跳位。
+  assert.ok(!/segment\.revealAt > frame\) continue;\s*\n\s*const key/.test(videoSource));
+  // 填充色与读数显隐分家：点亮集合只看 revealAt。
+  assert.ok(/litIdSet/.test(mapSource), '府的点亮状态与读数显隐应分开计算');
+
+  // 服务端算成片长度时必须把这段空拍加进去，否则 audion 与合成时长不同步。
+  const serverSource = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  assert.ok(
+    /timelineModule\?\.FINALE_PAUSE_SECONDS/.test(serverSource),
+    '服务端应复用时间轴的 FINALE_PAUSE_SECONDS',
+  );
+  assert.ok(
+    /totalDuration\s*\+\s*\n?\s*finalePauseSeconds/.test(serverSource),
+    'videoDuration = 旁白 + 空拍 + 片尾停留，空拍不能吃掉读数时间',
+  );
 });

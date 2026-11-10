@@ -6,7 +6,7 @@ export const sampleProject: ProjectData = {
   unit: 'คะแนน',
   locale: 'th',
   introDuration: 2.4,
-  finalHoldDuration: 4,
+  finalHoldDuration: 4.5,
   rankings: [
     {rank: 1, provinceId: 'TH-10', province: 'Bangkok', provinceEn: 'Bangkok', provinceTh: 'กรุงเทพมหานคร', value: 1250, narrationDuration: 3.5},
     {rank: 2, provinceId: 'TH-20', province: 'Chon Buri', provinceEn: 'Chon Buri', provinceTh: 'ชลบุรี', value: 980, narrationDuration: 3.3},

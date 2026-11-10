@@ -92,6 +92,33 @@ export const CAMERA_END_SECONDS: number | null = null;
  */
 const CAMERA_MIN_FRAMES = 6;
 
+/**
+ * 片尾「全部读数一起展示」的停留秒数。
+ *
+ * 读数改成逐府出现、说完就消失之后，完整的排名榜单要到**最后一句解说念完**
+ * 才凑齐（`timeline.finaleAt`）。沿用以前"句间停顿"那点时间（约 1.5s）会
+ * 让整份榜单几乎一闪而过，所以这里按府数给足读数时间，并封顶避免尾巴拖太长：
+ * 5 个府 ≈ 4.5s，10 个府 ≈ 6.5s，最多 8s。这段时间**不含**终场入场前的静默
+ * 间隔（{@link FINALE_PAUSE_SECONDS}），两者相加才是片尾总长度。
+ */
+export const finaleHoldSeconds = (provinceCount: number): number => {
+  const count =
+    Number.isFinite(provinceCount) && provinceCount > 0
+      ? Math.round(provinceCount)
+      : 1;
+  return Math.min(8, +(2.5 + 0.4 * count).toFixed(2));
+};
+
+/**
+ * 片尾「空一拍」的秒数。
+ *
+ * 最后一句解说念完，最后一个读数正好淡出（`hideAt === finalStart`），此前
+ * 终场动画就在**同一帧**起跳——观感是「啪一下没了、又啪一下全回来」。这里
+ * 留一段没有文字的静默间隔：地图安静一下，完整榜单再一起回来，落差才有呼吸。
+ * 0.6s ≈ 18 帧（30fps）。
+ */
+export const FINALE_PAUSE_SECONDS = 0.6;
+
 export type VideoTimeline = {
   introFrames: number;
   /**
@@ -105,7 +132,13 @@ export type VideoTimeline = {
   /** Intro camera move: whole country → resolved framing, across the opening line. */
   camera: CameraMove;
   segments: TimelineSegment[];
+  /** Frame the narration ends — the last readout has finished fading here. */
   finalStart: number;
+  /**
+   * Frame the complete ranking comes back: `finalStart` plus the silent beat
+   * ({@link FINALE_PAUSE_SECONDS}), so leaving and returning never touch.
+   */
+  finaleAt: number;
   totalFrames: number;
 };
 
@@ -220,6 +253,9 @@ const buildFromAudioSegments = (
   });
 
   const finalStart = toFrames(previousSeconds, fps);
+  // The complete ranking waits one silent beat after the last line, so the
+  // closing shot is preceded by an empty map instead of a one-frame blink.
+  const finalePause = toFrames(FINALE_PAUSE_SECONDS, fps);
   const opening =
     segments[0] && segments[0].part === "opening" ? segments[0] : undefined;
 
@@ -231,10 +267,17 @@ const buildFromAudioSegments = (
     camera: resolveCameraMove(segments, fps),
     segments,
     finalStart,
-    // Round up so the rendered video is never shorter than the audio track.
+    finaleAt: finalStart + finalePause,
+    // Round up so the rendered video is never shorter than the audio track. The
+    // pause is *added* to the hold: the empty beat must not eat reading time.
     totalFrames: Math.max(
-      previousFrame,
-      Math.ceil((previousSeconds + (project.finalHoldDuration ?? 0)) * fps),
+      previousFrame + finalePause,
+      Math.ceil(
+        (previousSeconds +
+          FINALE_PAUSE_SECONDS +
+          (project.finalHoldDuration ?? 0)) *
+          fps,
+      ),
     ),
   };
 };
@@ -286,6 +329,7 @@ const buildFromNarrationDurations = (
   });
 
   const holdSeconds = project.finalHoldDuration ?? animation.finalHoldDuration;
+  const finalePause = toFrames(FINALE_PAUSE_SECONDS, fps);
 
   return {
     introFrames,
@@ -297,9 +341,10 @@ const buildFromNarrationDurations = (
     camera: resolveCameraMove(segments, fps),
     segments,
     finalStart: previousFrame,
+    finaleAt: previousFrame + finalePause,
     totalFrames: Math.max(
-      previousFrame,
-      introFrames + Math.ceil((previousSeconds + holdSeconds) * fps),
+      previousFrame + finalePause,
+      introFrames + Math.ceil((previousSeconds + FINALE_PAUSE_SECONDS + holdSeconds) * fps),
     ),
   };
 };

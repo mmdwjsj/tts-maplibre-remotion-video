@@ -173,6 +173,17 @@ try {
   );
 }
 
+/**
+ * 视觉主题：预览页要画和成片一模一样的三行读数，文字颜色必须来自同一份主题，
+ * 否则网页上「深墨绿 + 白描边」和 MP4 里的颜色会悄悄分叉。
+ */
+let themeModule = null;
+try {
+  themeModule = await import("../src/config/theme.ts");
+} catch (error) {
+  console.warn(`[theme] 无法加载主题模块，预览读数退回内置墨绿色：${error.message}`);
+}
+
 const {
   config: safeAreaConfig,
   configPath: safeAreaConfigPath,
@@ -327,6 +338,97 @@ const resolveSafeAreaFor = (body, { silent = false } = {}) => {
  */
 
 /**
+ * 三行读数的排版标尺，与渲染端同源（`src/video/layout/labelPlacement.ts`）。
+ * 预览页只拿这份数字，不自己写字号——网页与成片因此不会出现「字号/行距不一样」。
+ */
+const labelStyle = () => {
+  const p = labelPlacementModule;
+  return {
+    font: p ? {...p.LABEL_FONT_SIZE} : {rank: 18, name: 27, value: 20},
+    baseline: p ? {...p.LABEL_BASELINE} : {rank: 26, name: 57, value: 84},
+    box: p ? {...p.LABEL_BOX} : {width: 230, height: 92},
+    ink: themeModule?.theme?.text ?? "#203027",
+    halo: p ? p.LABEL_HALO.color : "#FFFFFF",
+    haloWidth: p ? p.LABEL_HALO.width : 6,
+    // 拖拽上限：预览页用它判断「拖飞了」并弹回原位，与渲染端同一个数。
+    maxOffset: p ? p.MAX_MANUAL_OFFSET_PX : 150,
+  };
+};
+
+/**
+ * 排名读数的真实落位：与 `ThailandMap` 调同一个 `placeLabel`，按**名次顺序**
+ * 依次避让（诊断本身就是名次顺序），再叠上手动微调（预览图拖拽）。结果同时
+ * 喂给安全区审计和网页预览，所以「拖过界回原位」这条规则在网页与 MP4 里一致。
+ *
+ * 返回每个府的矩形 + 三行文字，预览直接照着画；审计只取矩形与冲突。
+ */
+const placeRankingLabels = (viewport, labelOffsets) => {
+  if (!labelPlacementModule || !viewport) return [];
+  const toRect = (bbox) => ({
+    x0: bbox[0][0],
+    y0: bbox[0][1],
+    x1: bbox[1][0],
+    y1: bbox[1][1],
+  });
+  const offsets = labelPlacementModule.normalizeLabelOffsetMap(labelOffsets);
+  const occupied = [];
+  return (viewport.diagnostics ?? []).map((diagnostic) => {
+    const key = String(diagnostic.provinceId ?? "").trim().toUpperCase();
+    const auto = labelPlacementModule.placeLabel({
+      bounds: toRect(diagnostic.bboxPx),
+      panelBounds: viewport.labelRect,
+      keepOut: viewport.keepOutRect ?? null,
+      occupied,
+    });
+    // 避让只认**自动落位**的骨架：先把自动矩形放进 occupied，再叠手动位移。
+    // 否则拖动一个读数会改变邻居的占位、把别人的位置一起带跑 —— 手动微调
+    // 只该动被拖的那一个；拖出来的重叠由审计如实报出。
+    occupied.push(auto.panelRect);
+    const placement = labelPlacementModule.applyLabelOffset(auto, offsets[key]);
+    return {diagnostic, placement, auto};
+  });
+};
+
+/**
+ * 预览页要画的内容：落位矩形 + 三行文字（`NO.02` / 泰文府名 / 数值）。
+ * 文字口径与 `ThailandMap` 一致：`valueLabel` 优先，否则用千分位；单位来自项目。
+ *
+ * `rect` 是**自动落位**的矩形，`offset` 是叠加在上面的手动位移 —— 网页拖动时
+ * 直接用 transform 平移，不再等一次服务端往返；重新打开页面时读同一个 offset。
+ */
+const rankingLabelsPayload = (viewport, rankings, unit, labelOffsets) => {
+  const byId = new Map(
+    (Array.isArray(rankings) ? rankings : []).map((row) => [
+      String(row?.provinceId ?? "").trim().toUpperCase(),
+      row,
+    ]),
+  );
+  return placeRankingLabels(viewport, labelOffsets)
+    .map(({diagnostic, placement, auto}) => {
+      const row = byId.get(String(diagnostic.provinceId).trim().toUpperCase());
+      if (!row) return null;
+      const valueText =
+        row.valueLabel ??
+        (Number.isFinite(Number(row.value))
+          ? Number(row.value).toLocaleString()
+          : String(row.value ?? ""));
+      return {
+        provinceId: diagnostic.provinceId,
+        rank: row.rank,
+        text: {
+          rank: `NO.${String(row.rank).padStart(2, "0")}`,
+          name: row.provinceTh || row.provinceEn || "",
+          value: `${valueText}${unit ? ` ${unit}` : ""}`.trim(),
+        },
+        rect: auto.panelRect,
+        offset: placement.manualOffset ?? null,
+        conflict: placement.conflict,
+      };
+    })
+    .filter(Boolean);
+};
+
+/**
  * Audits where every floating rank label would land, plus the fixed headline
  * blocks, against the resolved safe area.
  *
@@ -336,41 +438,29 @@ const resolveSafeAreaFor = (body, { silent = false } = {}) => {
  * layout, not of a second guess. Nothing is silently hidden: every conflict is
  * reported with the element id, its component, the direction and the pixels.
  */
-const auditSafeArea = (resolution, viewport, { silent = false } = {}) => {
+const auditSafeArea = (resolution, viewport, { silent = false, labelOffsets } = {}) => {
   if (!safeAreaModule || !viewport || !resolution) return null;
   const elements = [];
 
-  if (labelPlacementModule) {
-    const diagnostics = viewport.diagnostics ?? [];
-    // Every revealed province keeps its readout on screen, so the audit mirrors
-    // the render's placement order: each readout sees the rects already taken
-    // and steps down when a neighbour's block would collide with it.
-    const occupied = [];
-    for (const diagnostic of diagnostics) {
-      // Same placement rule the map component uses: the readout sits on the
-      // province itself, centred on it, and only moves when a core-rect edge or
-      // the right-hand action rail would clip it — otherwise this audit would
-      // check a layout the render never produces.
-      const own = diagnostic.bboxPx;
-      const toRect = (bbox) => ({x0: bbox[0][0], y0: bbox[0][1], x1: bbox[1][0], y1: bbox[1][1]});
-      const placement = labelPlacementModule.placeLabel({
-        bounds: toRect(own),
-        panelBounds: viewport.labelRect,
-        keepOut: viewport.keepOutRect ?? null,
-        occupied,
-      });
-      occupied.push(placement.panelRect);
-      elements.push({
-        id: `label:${diagnostic.provinceId}`,
-        component: "ThailandMap/placeLabel",
-        rect: placement.panelRect,
-        // `panel`, not `text`: every revealed province keeps its readout on
-        // screen now, so two readouts really can collide in the render — the
-        // pairwise overlap check must see them instead of skipping them.
-        kind: "panel",
-        conflict: placement.conflict,
-      });
-    }
+  // Every revealed province keeps its readout on screen, so the audit mirrors the
+  // render's placement order. Both sides use **rank order** (diagnostics already
+  // come in ranking order, the map sorts by rank): the narration counts down
+  // 5 → 1, so reveal order would describe a layout the render never has.
+  for (const {diagnostic, placement} of placeRankingLabels(viewport, labelOffsets)) {
+    elements.push({
+      id: `label:${diagnostic.provinceId}`,
+      component: "ThailandMap/placeLabel",
+      rect: placement.panelRect,
+      // `panel`, not `text`: every revealed province keeps its readout on screen
+      // now, so two readouts really can collide in the render — the pairwise
+      // overlap check must see them instead of skipping them.
+      kind: "panel",
+      // Manual drags are part of the layout under audit: if a hand-placed block
+      // collides with the rail or a neighbour, that is exactly what the user
+      // just did, and the audit should say so instead of checking the auto layout.
+      ...(placement.manualOffset ? { manualOffset: placement.manualOffset } : {}),
+      conflict: placement.conflict,
+    });
   }
 
   // The fixed headline blocks: their rects mirror the styles the render applies.
@@ -767,7 +857,10 @@ const server = http.createServer(async (req, res) => {
             }
           : undefined,
       );
-      const labelAudit = auditSafeArea(safeArea, viewport, { silent: true });
+      const labelAudit = auditSafeArea(safeArea, viewport, {
+        silent: true,
+        labelOffsets: body.labelOffsets,
+      });
       // Opening position of the intro camera move: the whole country, resolved
       // with the same options the render uses (only `fitMode` is overridden), so
       // the preview can show both ends of the move instead of guessing.
@@ -795,6 +888,19 @@ const server = http.createServer(async (req, res) => {
         paths: framingModule.projectFeatures(viewport, provinceGeoJson),
         safeArea,
         labelAudit,
+        // 排名读数：网页预览按这份矩形 + 文案把三行字画在府上，字号/基线也来自
+        // 服务端（`labelStyle`），所以预览看到的就是成片的版面。手动拖拽的偏移
+        // 原样回传（`labelOffsets`），刷新页面后读数还停在拖过的位置。
+        labels: rankingLabelsPayload(
+          viewport,
+          body.rankings,
+          body.unit,
+          body.labelOffsets,
+        ),
+        labelOffsets: labelPlacementModule
+          ? labelPlacementModule.normalizeLabelOffsetMap(body.labelOffsets)
+          : {},
+        labelStyle: labelStyle(),
         // The full province list (id + 英文名 + 泰文名) feeds the 府 ID picker and
         // the name columns in the UI, so none of the three is ever typed from
         // memory, and choosing any one of them fills the other two.
@@ -861,7 +967,9 @@ const server = http.createServer(async (req, res) => {
       // it here also writes the framing log (including every region that ends up
       // outside the frame).
       const viewport = resolveFraming(body.rankings, body.framing, safeArea);
-      const safeAreaAudit = auditSafeArea(safeArea, viewport);
+      const safeAreaAudit = auditSafeArea(safeArea, viewport, {
+        labelOffsets: body.labelOffsets,
+      });
 
       const outputName = safeName(body.outputName);
       const wavPath = path.join(generatedDir, `${outputName}.wav`);
@@ -981,16 +1089,31 @@ const server = http.createServer(async (req, res) => {
 
         cursor += spoken + (index < items.length - 1 ? gap : 0);
       });
-      // With the highlight following the voice, the last province would only be
-      // lit for a single frame if the video ended with the audio. Give it the
-      // same quiet moment the other provinces get (never shorter than 1.5s, so
-      // the #1 reveal is always actually visible).
-      const finalHoldSeconds = Math.max(gap, 1.5);
+      // The readouts now show one at a time and only the closing beat presents
+      // the complete ranking, so that final shot needs real reading time: it
+      // used to get the inter-line gap (~1.5s) because earlier the numbers had
+      // already accumulated on screen. `finaleHoldSeconds` scales with the
+      // number of provinces (5 → 4.5s, capped at 8s) and never goes below the
+      // per-line gap, so the #1 reveal is always visible for a beat.
+      const finaleHold =
+        Number.isFinite(Number(body.finaleHold)) && body.finaleHold !== undefined && body.finaleHold !== null && body.finaleHold !== ""
+          ? Math.max(0, Number(body.finaleHold))
+          : (timelineModule?.finaleHoldSeconds?.(ranked.length) ?? 1.5);
+      const finalHoldSeconds = Math.max(gap, finaleHold);
+      // The closing shot is preceded by a silent beat (readouts leave → empty map
+      // → whole ranking returns), which is added on top of the reading time so
+      // the pause never shortens the hold. Same constant the timeline uses, so
+      // the muxed audio and the composition report the same length.
+      const finalePauseSeconds = timelineModule?.FINALE_PAUSE_SECONDS ?? 0.6;
       const totalDuration = +(
         sourceDuration +
         gap * Math.max(0, items.length - 1)
       ).toFixed(3);
-      const videoDuration = +(totalDuration + finalHoldSeconds).toFixed(3);
+      const videoDuration = +(
+        totalDuration +
+        finalePauseSeconds +
+        finalHoldSeconds
+      ).toFixed(3);
 
       // The map lights a province when its *name* is voiced — the rank piece has
       // just been read out and the voice moves onto the province — so the
@@ -1100,6 +1223,10 @@ const server = http.createServer(async (req, res) => {
         // enough to reproduce (and audit) the layout.
         safeArea: safeAreaSummary(safeArea) ?? undefined,
         safeAreaAudit: safeAreaAudit ?? undefined,
+        // 手动微调记录：哪个府的读数被拖到哪里，时间轴文件里可追溯。
+        labelOffsets: labelPlacementModule
+          ? labelPlacementModule.normalizeLabelOffsetMap(body.labelOffsets)
+          : undefined,
         segments,
       };
       fs.writeFileSync(timelinePath, JSON.stringify(timeline, null, 2), "utf8");
@@ -1157,6 +1284,12 @@ const server = http.createServer(async (req, res) => {
           // never disagree with the preview.
           platform: safeArea?.platform ?? undefined,
           safeArea: safeArea ?? undefined,
+          // 预览图里手动拖拽过的读数位移，随生成请求一起进渲染 props：
+          // `ThailandMap` 用同一个 `applyLabelOffset` 叠在自动落位上，所以 MP4
+          // 与预览逐像素一致；超出上限的偏移在规整时就被丢弃（= 回自动落位）。
+          labelOffsets: labelPlacementModule
+            ? labelPlacementModule.normalizeLabelOffsetMap(body.labelOffsets)
+            : undefined,
           // NOTE: `debugSafeArea` is deliberately **not** set here. The
           // development overlay only draws when the props explicitly ask for it,
           // so an exported MP4 can never contain the safe-area mask or labels.
@@ -1203,6 +1336,10 @@ const server = http.createServer(async (req, res) => {
         framing: framingSummary(viewport),
         safeArea: safeAreaSummary(safeArea),
         safeAreaAudit: safeAreaAudit,
+        // 这次成片实际采用的手动微调（规整后），UI 用它提示「已生效 N 处」。
+        labelOffsets: labelPlacementModule
+          ? labelPlacementModule.normalizeLabelOffsetMap(body.labelOffsets)
+          : {},
         // `mismatched` is the actionable part; the UI turns it into a per-row
         // hint plus a one-click fix.
         provinceAudit: provinceAudit

@@ -42,5 +42,7 @@ export const animation = {
   defaultSegmentDuration: 3.2,
   highlightDuration: 0.55,
   labelDuration: 0.45,
-  finalHoldDuration: 4,
+  // 片尾一起展示全部读数的停留秒数（离线/Studio 兜底值；服务端按府数用
+  // `finaleHoldSeconds` 计算，5 个府 = 4.5s，最多 8s）。
+  finalHoldDuration: 4.5,
 };

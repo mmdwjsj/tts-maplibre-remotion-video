@@ -525,6 +525,61 @@
       fill: #d8f7f2;
     }
 
+    /* 排名读数：预览图里可拖动微调。halo/字号由服务端 labelStyle 内联写入，
+       这里只管交互与光标。 */
+    .map g.rank-label {
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .map.dragging-label,
+    .map.dragging-label g.rank-label {
+      cursor: grabbing;
+    }
+
+    /* 拖到上限外侧：读数变淡提示「这里拉不动了」，松手就回原位。 */
+    .map g.rank-label.label-out-of-range {
+      opacity: 0.45;
+    }
+
+    /* 回原位：短促的过渡，让「弹回去」看得见。 */
+    .map g.rank-label.snap-back {
+      transition: transform 180ms ease-out;
+    }
+
+    .label-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .label-offset-state {
+      color: #7ca5a4;
+      font-size: 9px;
+    }
+
+    .label-tools button {
+      padding: 2px 6px;
+      border: 1px solid rgba(124, 165, 164, 0.5);
+      border-radius: 5px;
+      background: transparent;
+      color: #cbe6e4;
+      font-size: 9px;
+      cursor: pointer;
+    }
+
+    .label-tools button:hover:not(:disabled) {
+      border-color: #e0661a;
+      color: #ffffff;
+    }
+
+    .label-tools button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
     /* 第三排多张卡之间留缝。 */
     .script-wrap .card + .card {
       margin-top: 8px;
@@ -1057,6 +1112,17 @@
           </div>
 
           <div id="previewNote" class="preview-note">正在计算取景…</div>
+
+          <!-- 手动微调：预览图里直接拖读数。偏移随生成请求进渲染 props；
+               拖过界（单轴超过上限）会立刻弹回自动落位，不会带进成片。 -->
+          <div class="label-tools">
+            <span id="labelOffsetState" class="label-offset-state"
+              >读数：自动落位</span
+            >
+            <button id="resetLabelOffsets" type="button" disabled>
+              恢复自动落位
+            </button>
+          </div>
         </div>
 
         <div class="framing-side">
@@ -1134,6 +1200,21 @@
               max="10"
               step="0.1"
               value="2"
+            />
+          </div>
+
+          <!-- 片尾「全部读数一起展示」的停留时间。读数现在逐府出现、说完就
+               消失，完整榜单只在最后一刻凑齐，所以这一项单独给时间。 -->
+          <div class="field">
+            <label for="finaleHold">片尾全部展示（秒）</label>
+            <input
+              id="finaleHold"
+              type="number"
+              min="0"
+              max="20"
+              step="0.5"
+              value=""
+              placeholder="自动（按府数）"
             />
           </div>
 
@@ -1857,8 +1938,100 @@
 
     /** 取景矩形 = 核心框，四边由预览图右侧那一组参数控制；预览与成片同源。 */
 
+    /* ------------------------------------------------------------------ *
+     * 排名读数的手动微调（在预览图里直接拖）
+     *
+     * 偏移叠加在自动落位之上，按府记 `{dx, dy}`：拖一格就是一格，不会因为重新
+     * 走一遍避让而跳位。生成时随请求上送，渲染端用同一个上限判断「拖飞了」——
+     * 单轴超过上限的偏移在预览里立刻弹回原位，也不会写进 MP4。
+     * ------------------------------------------------------------------ */
+
+    const LABEL_OFFSET_KEY = "thailand-ranking.label-offsets.v1";
+    /** 单轴位移上限的兜底值；实际以服务端 `labelStyle.maxOffset` 为准。 */
+    let labelOffsetLimit = 150;
+    let labelOffsets = {};
+    let labelOffsetHintTimer = 0;
+
+    const clampLabelOffset = (value) =>
+      Math.min(Math.max(value, -labelOffsetLimit), labelOffsetLimit);
+
+    /** 只留有限数、未超上限、非零的偏移；键统一大写（TH-10）。 */
+    const sanitizeLabelOffsets = (raw) => {
+      const out = {};
+      for (const [key, value] of Object.entries(raw || {})) {
+        const id = String(key ?? "").trim().toUpperCase();
+        const dx = Math.round(Number(value?.dx));
+        const dy = Math.round(Number(value?.dy));
+        if (!id || !Number.isFinite(dx) || !Number.isFinite(dy)) continue;
+        if (Math.abs(dx) > labelOffsetLimit || Math.abs(dy) > labelOffsetLimit) continue;
+        if (dx === 0 && dy === 0) continue;
+        out[id] = {dx, dy};
+      }
+      return out;
+    };
+
+    const readStoredLabelOffsets = () => {
+      try {
+        return sanitizeLabelOffsets(
+          JSON.parse(localStorage.getItem(LABEL_OFFSET_KEY) || "{}"),
+        );
+      } catch {
+        return {};
+      }
+    };
+
+    const renderLabelOffsetState = (message) => {
+      const count = Object.keys(labelOffsets).length;
+      const button = $("#resetLabelOffsets");
+      if (button) button.disabled = count === 0;
+      const state = $("#labelOffsetState");
+      if (!state) return;
+      state.textContent =
+        message ??
+        (count === 0
+          ? "读数：自动落位（可拖动微调，双击单个读数复位）"
+          : `读数：已手动调整 ${count} 个 · 单轴上限 ${labelOffsetLimit}px`);
+    };
+
+    const persistLabelOffsets = () => {
+      try {
+        localStorage.setItem(LABEL_OFFSET_KEY, JSON.stringify(labelOffsets));
+      } catch {
+        /* 隐私模式写不进去：偏移仍留在内存，本次生成照常生效 */
+      }
+      renderLabelOffsetState();
+    };
+
+    labelOffsets = readStoredLabelOffsets();
+
+    /** 拖动结束后的提示（复用预览说明那一行，几秒后自动恢复）。 */
+    const flashLabelHint = (text) => {
+      const note = $("#labelOffsetState");
+      if (!note) return;
+      renderLabelOffsetState(text);
+      clearTimeout(labelOffsetHintTimer);
+      labelOffsetHintTimer = setTimeout(() => renderLabelOffsetState(), 2600);
+    };
+
     const drawFramingPreview = (payload) => {
-      const { viewport, introViewport, paths, provinces, audit, safeArea, labelAudit } = payload;
+      const {
+        viewport,
+        introViewport,
+        paths,
+        provinces,
+        audit,
+        safeArea,
+        labelAudit,
+        labels,
+        labelStyle,
+      } = payload;
+
+      // 拖拽上限与校验规则全部来自服务端同一份标尺：网页、审计、MP4 判定一致。
+      if (labelStyle && Number.isFinite(Number(labelStyle.maxOffset))) {
+        labelOffsetLimit = Number(labelStyle.maxOffset);
+        labelOffsets = sanitizeLabelOffsets(labelOffsets);
+        renderLabelOffsetState();
+      }
       provinceNames = Object.fromEntries(
         paths.map((item) => [item.id, item.name || ""]),
       );
@@ -1892,6 +2065,43 @@
         })
         .join("");
 
+      // 排名读数：三行文字（NO. / 泰文府名 / 数值）画在府上，和服务端落位、
+      // 字号、行距完全同源 —— 矩形来自 `placeLabel`，字号/基线来自
+      // `labelStyle`，所以网页上看到的版面就是 MP4 里的版面。
+      const labelSvg = (items, style) => {
+        if (!Array.isArray(items) || !items.length || !style) return "";
+        return items
+          .map(({ provinceId, text, rect, offset }) => {
+            const cx = (rect.x0 + rect.x1) / 2;
+            // 手动微调：页面自己记的偏移优先（拖动时是它），服务端回传的偏移兜底。
+            const id = String(provinceId ?? "").trim().toUpperCase();
+            const manual = labelOffsets[id] ?? offset ?? null;
+            const transform = manual
+              ? ` transform="translate(${manual.dx} ${manual.dy})"`
+              : "";
+            const lines = [
+              { value: text.rank, dy: style.baseline.rank, size: style.font.rank, spacing: 2 },
+              { value: text.name, dy: style.baseline.name, size: style.font.name, spacing: 0 },
+              { value: text.value, dy: style.baseline.value, size: style.font.value, spacing: 0 },
+            ];
+            return (
+              `<g class="rank-label" data-province="${escapeHtml(id)}"${transform}>` +
+              lines
+                .map(
+                  (line) =>
+                    `<text x="${cx}" y="${rect.y0 + line.dy}" text-anchor="middle"` +
+                    ` font-size="${line.size}" font-weight="700"` +
+                    (line.spacing ? ` letter-spacing="${line.spacing}"` : "") +
+                    ` fill="${style.ink}" stroke="${style.halo}" stroke-width="${style.haloWidth}"` +
+                    ` stroke-linejoin="round" paint-order="stroke">${escapeHtml(line.value)}</text>`,
+                )
+                .join("") +
+              `</g>`
+            );
+          })
+          .join("");
+      };
+
       const { width, height } = viewport.stage;
       // 取景矩形 = 核心区：地图与文字共用一条边界，页面里只有这一个框。
       const band = viewport.labelRect;
@@ -1917,10 +2127,11 @@
           (titleY / viewport.stage.height) * 100
         }%`;
       }
-      // 绘制顺序：府形状 → 可选的四分区压暗带 → 核心框（永远最上层）。
+      // 绘制顺序：府形状 → 排名读数 → 可选的四分区压暗带 → 核心框（永远最上层）。
       // 标题遮盖带已删除：渲染端不再有这条带，预览也不该画。
       map.innerHTML =
         shapes +
+        labelSvg(labels, labelStyle) +
         // 安全区遮罩只在这里（网页预览）出现，且只有开关打开时才画。
         (safeAreaPreviewEnabled() && safeArea
           ? safeAreaOverlaySvg(safeArea, viewport.stage)
@@ -1969,6 +2180,8 @@
             // （核心框四条边），手动接管时才带上，预览与成片取值完全相同。
             ...safeAreaState(),
             coreMargins: coreMarginsState(),
+            // 预览图里拖出来的读数偏移：审计按这份实际版面检查重叠。
+            labelOffsets,
           }),
         });
 
@@ -2633,6 +2846,128 @@
       scheduleFramingPreview();
     });
 
+    /* 预览图里拖读数：pointer 事件直接改 transform（不等服务端往返），
+       松手才落库 + 重算审计。拖动过程把位移夹在上限内，超界时变淡提示；
+       松手若仍超界（拖飞了），立刻弹回自动落位并清掉该府的偏移。 */
+    const setupLabelDrag = () => {
+      const map = $("#previewMap");
+      if (!map) return;
+      let drag = null;
+
+      const toStage = (event) => {
+        const ctm = map.getScreenCTM();
+        if (!ctm) return { x: event.clientX, y: event.clientY };
+        const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
+          ctm.inverse(),
+        );
+        return { x: point.x, y: point.y };
+      };
+      const applyTransform = (group, dx, dy) =>
+        group.setAttribute("transform", `translate(${dx} ${dy})`);
+      const groupId = (group) =>
+        String(group.dataset.province || "").trim().toUpperCase();
+
+      const resetGroup = (group, id, hint) => {
+        delete labelOffsets[id];
+        group.classList.add("snap-back");
+        applyTransform(group, 0, 0);
+        setTimeout(() => group.classList.remove("snap-back"), 220);
+        if (hint) flashLabelHint(hint);
+        persistLabelOffsets();
+        scheduleFramingPreview();
+      };
+
+      map.addEventListener("pointerdown", (event) => {
+        const group = event.target.closest?.("g.rank-label");
+        if (!group || event.button !== 0) return;
+        const id = groupId(group);
+        const base = labelOffsets[id] ?? { dx: 0, dy: 0 };
+        drag = {
+          id,
+          group,
+          base,
+          start: toStage(event),
+          last: {...base, over: false},
+          moved: false,
+        };
+        group.classList.remove("snap-back");
+        map.classList.add("dragging-label");
+        try {
+          group.setPointerCapture(event.pointerId);
+        } catch {
+          /* 老浏览器没有指针捕获：靠 pointerup 兜底 */
+        }
+        event.preventDefault();
+      });
+
+      map.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        const now = toStage(event);
+        const rawX = drag.base.dx + (now.x - drag.start.x);
+        const rawY = drag.base.dy + (now.y - drag.start.y);
+        const over =
+          Math.abs(rawX) > labelOffsetLimit || Math.abs(rawY) > labelOffsetLimit;
+        const dx = clampLabelOffset(rawX);
+        const dy = clampLabelOffset(rawY);
+        drag.moved =
+          drag.moved ||
+          Math.hypot(dx - drag.base.dx, dy - drag.base.dy) > 2;
+        drag.last = {dx, dy, over};
+        applyTransform(drag.group, dx, dy);
+        drag.group.classList.toggle("label-out-of-range", over);
+        event.preventDefault();
+      });
+
+      const finishDrag = () => {
+        if (!drag) return;
+        const {id, group, last, moved} = drag;
+        drag = null;
+        map.classList.remove("dragging-label");
+        group.classList.remove("label-out-of-range");
+        if (!moved) {
+          applyTransform(group, last.dx, last.dy);
+          return;
+        }
+        if (last.over) {
+          resetGroup(group, id, `位移超出 ±${labelOffsetLimit}px，已回到自动落位`);
+          return;
+        }
+        if (Math.abs(last.dx) < 3 && Math.abs(last.dy) < 3) {
+          resetGroup(group, id, null);
+          return;
+        }
+        labelOffsets[id] = {dx: Math.round(last.dx), dy: Math.round(last.dy)};
+        applyTransform(group, labelOffsets[id].dx, labelOffsets[id].dy);
+        persistLabelOffsets();
+        scheduleFramingPreview();
+      };
+
+      map.addEventListener("pointerup", finishDrag);
+      map.addEventListener("pointercancel", finishDrag);
+
+      // 双击单个读数：只复位这一个府。
+      map.addEventListener("dblclick", (event) => {
+        const group = event.target.closest?.("g.rank-label");
+        if (!group) return;
+        const id = groupId(group);
+        if (!labelOffsets[id]) return;
+        resetGroup(group, id, `${id} 已恢复自动落位`);
+        event.preventDefault();
+      });
+    };
+
+    setupLabelDrag();
+
+    $("#resetLabelOffsets").addEventListener("click", () => {
+      if (!Object.keys(labelOffsets).length) return;
+      labelOffsets = {};
+      persistLabelOffsets();
+      flashLabelHint("全部读数已恢复自动落位");
+      scheduleFramingPreview();
+    });
+
+    renderLabelOffsetState();
+
     $("#title").addEventListener("input", (event) => {
       $("#previewTitle").textContent = event.target.value;
     });
@@ -2746,6 +3081,13 @@
           ttsSpeed: Number($("#ttsSpeed").value),
           parameters: Object.fromEntries(Array.from(document.querySelectorAll("[data-tts-parameter]")).map((input) => [input.dataset.ttsParameter, input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : input.value])),
           gap: Number($("#gap").value),
+          // 留空 = 由服务端按府数自动算（5 个府 4.5s，封顶 8s）。
+          ...(() => {
+            const raw = $("#finaleHold").value.trim();
+            return raw === "" || !Number.isFinite(Number(raw))
+              ? {}
+              : { finaleHold: Math.max(0, Number(raw)) };
+          })(),
           fps: Number($("#fps").value),
           resolution: $("#resolution").value,
           framing: framingState(),
@@ -2754,6 +3096,8 @@
           ...safeAreaState(),
           // 与预览请求完全相同的一组核心框四边，MP4 用同一个矩形构图。
           coreMargins: coreMarginsState(),
+          // 预览图里手动拖过的读数位移，成片按同一份偏移渲染。
+          labelOffsets,
           rankings: data,
         };
 
@@ -2780,6 +3124,12 @@
         // 这次成片实际用的安全区（与 timeline 文件里记录的一致），
         // 连同标签/文字的越界检查结果一起显示。
         renderSafeAreaInfo(result.safeArea, result.safeAreaAudit);
+
+        // 手动微调是否真的进了这次成片：服务端回的是规整后的偏移。
+        const appliedOffsetCount = Object.keys(result.labelOffsets || {}).length;
+        if (appliedOffsetCount > 0) {
+          flashLabelHint(`本次成片已应用 ${appliedOffsetCount} 处手动微调`);
+        }
 
         const producedSeconds = Number(
           result.totalDuration ?? result.duration,

@@ -68,6 +68,12 @@ export type ProjectData = {
    */
   safeArea?: SafeAreaResolution;
   /**
+   * 手动微调：预览图里把某个府的读数拖动后记下的像素位移，键是 provinceId
+   * （大写）。叠加在自动落位之上；超出 `MAX_MANUAL_OFFSET_PX` 的输入会被
+   * 丢弃并回落到自动落位，所以渲染永远拿到的是可用的偏移。
+   */
+  labelOffsets?: Record<string, {dx: number; dy: number}>;
+  /**
    * Development-only switch for the safe-area overlay. It is **never** written
    * into the production render props, so an exported MP4 can never contain the
    * debug mask, borders or coordinate labels.

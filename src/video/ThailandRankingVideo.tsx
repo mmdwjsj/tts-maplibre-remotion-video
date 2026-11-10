@@ -82,22 +82,30 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
   const revealedIndex = findRevealedSegmentIndex(timeline.segments, frame);
   const activeSegment =
     revealedIndex === -1 ? undefined : timeline.segments[revealedIndex];
-  // Provinces already lit, each with the frame its name started being voiced.
-  // The list only grows: when the narration moves on, the previous readout stays
-  // on the map instead of disappearing, so the picture accumulates the ranking.
-  const revealed = useMemo(() => {
+  // Every ranked province and the two beats of its readout: it enters when its
+  // name starts being voiced (`revealAt`), leaves when its line ends (`hideAt`),
+  // and the whole set comes back together once the narration is over — one
+  // silent beat later (`finaleAt`), so the empty map reads as a pause instead of
+  // a one-frame blink.
+  //
+  // The list is deliberately **not** filtered by the current frame: label
+  // placement is rank-ordered avoidance, so dropping the not-yet-announced
+  // provinces from the input would make an already placed readout jump when a
+  // higher rank joins later. The map hides what is not due yet instead of
+  // forgetting it.
+  const readouts = useMemo(() => {
     const seen = new Set<string>();
-    const out: { datum: RankingDatum; revealAt: number }[] = [];
+    const out: { datum: RankingDatum; revealAt: number; hideAt: number }[] = [];
     for (const segment of timeline.segments) {
       const datum = segment.datum;
-      if (!datum || segment.revealAt > frame) continue;
+      if (!datum) continue;
       const key = String(datum.provinceId).trim().toUpperCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ datum, revealAt: segment.revealAt });
+      out.push({ datum, revealAt: segment.revealAt, hideAt: segment.end });
     }
     return out;
-  }, [frame, timeline.segments]);
+  }, [timeline.segments]);
   // Platform UI safe area. The server resolves it once per job (from the
   // platform config plus the publish-description tier) and writes it into the
   // render props, so the MP4 uses exactly the rectangles the preview showed.
@@ -270,9 +278,10 @@ export const ThailandRankingVideo: React.FC<{ project: ProjectData }> = ({
           <ThailandMap
             geojson={geoData as ThailandGeoJson}
             project={project}
-            revealed={revealed}
+            readouts={readouts}
             active={activeSegment?.datum}
             revealStart={activeSegment?.revealAt ?? 0}
+            allAt={timeline.finaleAt}
             framing={framing}
           />
         </div>
