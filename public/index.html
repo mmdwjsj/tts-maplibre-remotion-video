@@ -328,6 +328,14 @@
       padding: 3px 5px;
     }
 
+    /* 单位列：每行自定义，内容短，压住宽度避免整张表横向滚动。 */
+    td input.unit-input {
+      width: 62px;
+      min-width: 44px;
+      max-width: 72px;
+      padding: 3px 4px;
+    }
+
     td select.province-id {
       min-width: 108px;
       padding: 3px 4px;
@@ -1069,7 +1077,7 @@
 
       <p class="link-hint">
         三列互通：选择府 ID 会自动带出英文名与泰文名；输入或选择泰文名（或英文名）
-        会自动回填府 ID 与另一列。
+        会自动回填府 ID 与另一列。「单位」每行单独填，直接跟在数值后面（留空则不显示）。
       </p>
 
       <div id="dataWarnings" class="data-warnings"></div>
@@ -1083,6 +1091,7 @@
               <th>英文名</th>
               <th>泰文名</th>
               <th>数值</th>
+              <th>单位</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -1483,6 +1492,7 @@
         provinceEn: "Bangkok",
         provinceTh: "กรุงเทพมหานคร",
         value: 12500,
+        unit: "คะแนน",
       },
       {
         rank: 2,
@@ -1490,6 +1500,7 @@
         provinceEn: "Chiang Mai",
         provinceTh: "เชียงใหม่",
         value: 9800,
+        unit: "คะแนน",
       },
       {
         rank: 3,
@@ -1497,6 +1508,7 @@
         provinceEn: "Chon Buri",
         provinceTh: "ชลบุรี",
         value: 8600,
+        unit: "คะแนน",
       },
     ];
 
@@ -2444,6 +2456,8 @@
           input.addEventListener("input", (event) => {
             ranking[key] = Number(event.target.value);
             refreshScript();
+            // 名次决定配色、数值就是读数第三行，改了要立刻重画预览。
+            scheduleFramingPreview();
           });
           td.append(input);
           return td;
@@ -2466,6 +2480,22 @@
         });
 
         tr.append(numberCell("value"));
+
+        // 单位：每行单独自定义，直接跟在读数第三行的数值后面；留空则不显示。
+        // 预览与生成请求都直接上送 `data`，所以这一列无需另外拼装字段。
+        const unitCell = document.createElement("td");
+        const unitInput = document.createElement("input");
+        unitInput.type = "text";
+        unitInput.className = "unit-input";
+        unitInput.value = ranking.unit ?? "";
+        unitInput.placeholder = "单位";
+        unitInput.setAttribute("autocomplete", "off");
+        unitInput.addEventListener("input", (event) => {
+          ranking.unit = event.target.value;
+          scheduleFramingPreview();
+        });
+        unitCell.append(unitInput);
+        tr.append(unitCell);
 
         const actionCell = document.createElement("td");
         const removeButton = document.createElement("button");
@@ -2988,6 +3018,7 @@
         provinceEn: "",
         provinceTh: "",
         value: 0,
+        unit: "",
       });
 
       render();

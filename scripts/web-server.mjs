@@ -412,13 +412,17 @@ const rankingLabelsPayload = (viewport, rankings, unit, labelOffsets) => {
         (Number.isFinite(Number(row.value))
           ? Number(row.value).toLocaleString()
           : String(row.value ?? ""));
+      // 单位：网页表格里每行自己填的 `unit` 优先，没这个字段才回退到项目级
+      // `unit`（兼容旧 API 调用）；留空则只有数值。直接跟在数值后面，成片
+      // `ThailandMap` 用同一口径拼，预览与 MP4 一字不差。
+      const unitText = String(row.unit ?? unit ?? "").trim();
       return {
         provinceId: diagnostic.provinceId,
         rank: row.rank,
         text: {
           rank: `NO.${String(row.rank).padStart(2, "0")}`,
           name: row.provinceTh || row.provinceEn || "",
-          value: `${valueText}${unit ? ` ${unit}` : ""}`.trim(),
+          value: `${valueText}${unitText ? ` ${unitText}` : ""}`.trim(),
         },
         rect: auto.panelRect,
         offset: placement.manualOffset ?? null,
@@ -1252,7 +1256,9 @@ const server = http.createServer(async (req, res) => {
         project: {
           title: String(body.title || ""),
           subtitle: "",
-          unit: "",
+          // 项目级单位只作兜底：网页表格里每行自定义的单位在 rankings 里，
+          // 由 ThailandMap 优先取用。外部 API 只传顶层 unit 时仍然生效。
+          unit: String(body.unit ?? ""),
           locale: "th",
           rankings: body.rankings,
           // The opening line is narrated, so it lives in audioSegments rather

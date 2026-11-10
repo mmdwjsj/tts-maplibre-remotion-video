@@ -1270,6 +1270,42 @@ test('预览图：排名读数由服务端下发的矩形 + 标尺绘制，不�
 });
 
 /* -------------------------------------------------------------------------- *
+ * 单位：网页逐行填写 → 预览与成片同口径拼在数值后面
+ * -------------------------------------------------------------------------- */
+
+test('单位：每行自定义，UI / 预览 / 成片 / 校验四处同源', () => {
+  const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+  const serverSource = fs.readFileSync(path.join(root, 'scripts', 'web-server.mjs'), 'utf8');
+  const mapSource = fs.readFileSync(
+    path.join(root, 'src', 'video', 'components', 'ThailandMap.tsx'),
+    'utf8',
+  );
+  const schemaSource = fs.readFileSync(path.join(root, 'src', 'data', 'schema.ts'), 'utf8');
+  const typesSource = fs.readFileSync(path.join(root, 'src', 'types.ts'), 'utf8');
+
+  // 网页：多一列「单位」，每行输入写回 ranking.unit；两个请求都原样上送 data。
+  assert.ok(/<th>单位<\/th>/.test(html), '排名数据表应有「单位」列');
+  assert.ok(/ranking\.unit = event\.target\.value/.test(html), '单位输入要写回该行数据');
+  assert.ok(/rankings: data,/.test(html), '预览与生成请求都要上送含 unit 的 rankings');
+  assert.ok(/unit: ""/.test(html), '新增的空行也要带单位字段');
+
+  // 服务端：行级优先、项目级兜底，且不再把项目级单位写死成空串。
+  assert.ok(/row\.unit \?\? unit/.test(serverSource), '预览文案要用行级单位优先');
+  assert.ok(
+    /unit: String\(body\.unit \?\? ""\)/.test(serverSource),
+    '生成 props 要透传项目级单位兜底',
+  );
+
+  // 渲染端：同一口径拼成一行文本，预览与成片一字不差。
+  assert.ok(/datum\.unit \?\? project\.unit/.test(mapSource), '成片读数要用行级单位优先');
+  assert.ok(/valueLine/.test(mapSource), '数值与单位应拼成一行文本');
+
+  // zod 默认 strip 未声明字段：类型与 schema 不声明，导入 JSON 时单位会丢。
+  assert.ok(/unit\?: string/.test(typesSource), 'RankingDatum 要声明行级单位');
+  assert.ok(/unit: z\.string\(\)\.optional\(\)/.test(schemaSource), 'rankingSchema 要保留行级单位');
+});
+
+/* -------------------------------------------------------------------------- *
  * 手动微调：预览拖拽 → 生成生效，拖飞了回原位
  * -------------------------------------------------------------------------- */
 

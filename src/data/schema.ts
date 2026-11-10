@@ -8,6 +8,7 @@ export const rankingSchema = z.object({
   provinceTh: z.string().min(1),
   value: z.coerce.number(),
   valueLabel: z.string().optional(),
+  unit: z.string().optional(),
   narrationDuration: z.coerce.number().positive().optional(),
 });
 

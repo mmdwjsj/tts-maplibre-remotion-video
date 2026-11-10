@@ -236,6 +236,11 @@ export const ThailandMap: React.FC<Props> = ({geojson, project, readouts, active
       // name (second line) is the line that sits exactly over the province.
       const textX = placement.panel[0] + LABEL_WIDTH / 2;
       const textY = placement.panel[1];
+      // 单位：这一行自己填的优先，没填才回退到项目级 unit，留空则只有数值。
+      // 拼接口径与服务端 rankingLabelsPayload 一致，预览与成片一字不差。
+      const valueText = datum.valueLabel ?? datum.value.toLocaleString();
+      const valueUnit = String(datum.unit ?? project.unit ?? "").trim();
+      const valueLine = `${valueText}${valueUnit ? ` ${valueUnit}` : ""}`;
       return <g key={key} opacity={opacity} textAnchor="middle">
         <text x={textX} y={textY + LABEL_BASELINE.rank} fill={theme.text} fontSize={LABEL_FONT_SIZE.rank} fontWeight="700" letterSpacing="2" {...HALO}>
           {rankLabel(datum.rank)}
@@ -244,7 +249,7 @@ export const ThailandMap: React.FC<Props> = ({geojson, project, readouts, active
           {datum.provinceTh || datum.provinceEn}
         </text>
         <text x={textX} y={textY + LABEL_BASELINE.value} fill={theme.text} fontSize={LABEL_FONT_SIZE.value} fontWeight="700" {...HALO}>
-          {datum.valueLabel ?? datum.value.toLocaleString()} {project.unit}
+          {valueLine}
         </text>
       </g>;
     })}

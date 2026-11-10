@@ -10,6 +10,8 @@ export type RankingDatum = {
   provinceTh: string;
   value: number;
   valueLabel?: string;
+  /** 每个府自己的单位，直接跟在读数第三行的数值后面；留空则不显示。 */
+  unit?: string;
   narrationDuration?: number;
 };
 
