@@ -10,6 +10,7 @@ import test from 'node:test';
 import {
   buildTimeline,
   CAMERA_START_DELAY_SECONDS,
+  CLOSING_HOLD_SECONDS,
   FINALE_PAUSE_SECONDS,
   finaleHoldSeconds,
   findRevealedSegmentIndex,
@@ -295,5 +296,100 @@ test('片尾节奏：最后一个读数淡出后先空一拍，完整榜单再�
   assert.ok(
     timeline.finaleAt >= lastEnd,
     '终场入场不能早于最后一段解说结束',
+  );
+});
+
+/* -------------------------------------------------------------------------- *
+ * 结束语：排在「全部府一起展示」之后，念完再收尾；留空则整段消失
+ * -------------------------------------------------------------------------- */
+
+const HOLD_SECONDS = 4.5;
+
+/** 最后一句排名之后接「空一拍 + 片尾停留」的静音，再跟结束语。 */
+const withClosing = () =>
+  buildTimeline(
+    project({
+      finalHoldDuration: HOLD_SECONDS,
+      audioSegments: [
+        { type: 'opening', duration: 1, gapAfter: 1 },
+        { type: 'ranking', rank: 3, part: 'rank', duration: 0.5, gapAfter: 0 },
+        { type: 'ranking', rank: 3, part: 'name', duration: 1.5, gapAfter: 1 },
+        { type: 'ranking', rank: 2, part: 'rank', duration: 1, gapAfter: 0 },
+        { type: 'ranking', rank: 2, part: 'name', duration: 2, gapAfter: 1 },
+        { type: 'ranking', rank: 1, part: 'rank', duration: 0.5, gapAfter: 0 },
+        // 名次 1 念完 → 空一拍 + 片尾全部展示（这段静音由服务端写进 gapAfter）
+        { type: 'ranking', rank: 1, part: 'name', duration: 1.5, gapAfter: FINALE_PAUSE_SECONDS + HOLD_SECONDS },
+        { type: 'closing', duration: 2, gapAfter: 0 },
+      ],
+    }),
+  );
+
+test('结束语是最后一段，且不点亮任何府', () => {
+  const timeline = withClosing();
+  const last = timeline.segments[timeline.segments.length - 1];
+
+  assert.equal(last.part, 'closing');
+  assert.equal(last.datum, undefined);
+  assert.equal(
+    timeline.segments.filter((segment) => segment.part === 'closing').length,
+    1,
+  );
+  // 读数集合不受影响：结束语不参与府的点亮/读数。
+  assert.equal(
+    timeline.segments.filter((segment) => segment.part === 'name').length,
+    3,
+  );
+});
+
+test('结束语在完整榜单展示完之后才开口，念完再留收尾', () => {
+  const timeline = withClosing();
+  const closing = timeline.segments[timeline.segments.length - 1];
+  const pauseFrames = Math.round(FINALE_PAUSE_SECONDS * FPS);
+  const holdFrames = Math.round(HOLD_SECONDS * FPS);
+
+  // 最后一句排名的结束点没有因为结束语而移动：读数仍在这里淡出。
+  assert.equal(timeline.finalStart, 330);
+  // 完整榜单还是「空一拍」之后回来，早于结束语。
+  assert.equal(timeline.finaleAt, timeline.finalStart + pauseFrames);
+  assert.ok(
+    closing.start >= timeline.finaleAt + holdFrames,
+    `结束语应等榜单展示满 ${HOLD_SECONDS}s 再开口（实际 ${(closing.start - timeline.finaleAt) / FPS}s）`,
+  );
+
+  // 视频 = 结束语结束 + 收尾停留，避免最后一句被切掉。
+  const closingEnd = closing.start + closing.duration;
+  assert.equal(
+    timeline.totalFrames,
+    closingEnd + Math.round(CLOSING_HOLD_SECONDS * FPS),
+  );
+});
+
+test('结束语留空：时间轴、时长、读数与旧版完全一致', () => {
+  const withoutClosing = buildTimeline(
+    project({
+      finalHoldDuration: HOLD_SECONDS,
+      audioSegments: [
+        { type: 'opening', duration: 1, gapAfter: 1 },
+        { type: 'ranking', rank: 3, part: 'rank', duration: 0.5, gapAfter: 0 },
+        { type: 'ranking', rank: 3, part: 'name', duration: 1.5, gapAfter: 1 },
+        { type: 'ranking', rank: 2, part: 'rank', duration: 1, gapAfter: 0 },
+        { type: 'ranking', rank: 2, part: 'name', duration: 2, gapAfter: 1 },
+        { type: 'ranking', rank: 1, part: 'rank', duration: 0.5, gapAfter: 0 },
+        { type: 'ranking', rank: 1, part: 'name', duration: 1.5, gapAfter: 0 },
+      ],
+    }),
+  );
+
+  assert.ok(
+    withoutClosing.segments.every((segment) => segment.part !== 'closing'),
+  );
+  // 末段仍是最后一句排名：finalStart 就是音频结束点。
+  assert.equal(withoutClosing.finalStart, 330);
+  // 时长公式没变：音频 + 空一拍 + 片尾停留（边界从秒数取整，允许 1 帧误差）。
+  const expectedFrames =
+    330 + Math.round((FINALE_PAUSE_SECONDS + HOLD_SECONDS) * FPS);
+  assert.ok(
+    Math.abs(withoutClosing.totalFrames - expectedFrames) <= 1,
+    `总帧数 ${withoutClosing.totalFrames} 应约为 ${expectedFrames}`,
   );
 });

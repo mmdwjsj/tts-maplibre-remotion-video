@@ -13,7 +13,12 @@ import type { AudioSegment, ProjectData, RankingDatum } from "../types";
  * what render props written before the split carry, and what a line that says
  * nothing about ranks would fall back to.
  */
-export type TimelinePart = "opening" | "rank" | "name" | "line";
+export type TimelinePart =
+  | "opening"
+  | "rank"
+  | "name"
+  | "line"
+  | "closing";
 
 /**
  * A continuous block of the video timeline.
@@ -26,7 +31,10 @@ export type TimelinePart = "opening" | "rank" | "name" | "line";
  */
 export type TimelineSegment = {
   key: string;
-  /** The province this segment belongs to; absent on `opening` and `rank`. */
+  /**
+   * The province this segment belongs to; absent on `opening`, `rank` and
+   * `closing` (neither has a province to light).
+   */
   datum?: RankingDatum;
   part: TimelinePart;
   /** Frame the narration for this piece starts. */
@@ -119,6 +127,25 @@ export const finaleHoldSeconds = (provinceCount: number): number => {
  */
 export const FINALE_PAUSE_SECONDS = 0.6;
 
+/**
+ * 结束语念完之后的收尾停留（秒）。
+ *
+ * 结束语是整支视频最后一句，说完立刻切黑会显得被掐断。这里留一点余韵，让
+ * 完整榜单在声音停下后再停 1.5s。这段只影响**有结束语**的视频；没有结束语
+ * 时视频长度、节奏与以前逐帧一致。
+ */
+export const CLOSING_HOLD_SECONDS = 1.5;
+
+/**
+ * 结束语相对「最后一句排名念完」的固定延迟：空一拍 + 片尾全部展示。
+ *
+ * 这段静默不是普通的句间停顿，而是**已经把完整榜单亮出来给人看**的时间，
+ * 所以结束语要在它之后才开口。服务端把这段静默写进前一段的 `gapAfter`，
+ * 时间轴只负责按音频还原，两边用的是同一个函数。
+ */
+export const closingDelaySeconds = (finaleHold: number): number =>
+  FINALE_PAUSE_SECONDS + Math.max(0, finaleHold);
+
 export type VideoTimeline = {
   introFrames: number;
   /**
@@ -132,7 +159,11 @@ export type VideoTimeline = {
   /** Intro camera move: whole country → resolved framing, across the opening line. */
   camera: CameraMove;
   segments: TimelineSegment[];
-  /** Frame the narration ends — the last readout has finished fading here. */
+  /**
+   * Frame the last **ranking** line ends — the final readout has finished fading
+   * here. A closing line, when present, is spoken after the finale and therefore
+   * sits *after* `finaleAt`, not before it.
+   */
   finalStart: number;
   /**
    * Frame the complete ranking comes back: `finalStart` plus the silent beat
@@ -196,6 +227,7 @@ const sortByRevealOrder = (rankings: RankingDatum[]) =>
 
 const partOf = (segment: AudioSegment): TimelinePart => {
   if (segment.type === "opening") return "opening";
+  if (segment.type === "closing") return "closing";
   if (segment.part === "rank") return "rank";
   if (segment.part === "name") return "name";
   return "line";
@@ -217,11 +249,17 @@ const buildFromAudioSegments = (
   const segments: TimelineSegment[] = [];
   let previousSeconds = 0;
   let previousFrame = 0;
+  // The instant the last *ranking* line stops being spoken. With a closing line
+  // that is when the readouts fade out — the sign-off comes later, after the
+  // whole ranking has been on screen, and must not move this beat.
+  let lastRankingEndFrame = 0;
+  let hasClosing = false;
 
   (project.audioSegments ?? []).forEach((segment, index) => {
     const spokenSeconds = Math.max(0, segment.duration);
     const gapSeconds = Math.max(0, segment.gapAfter ?? 0);
     const part = partOf(segment);
+    if (part === "closing") hasClosing = true;
     const start = previousFrame;
     const narrated = Math.max(
       start + 1,
@@ -248,11 +286,18 @@ const buildFromAudioSegments = (
       end,
     });
 
+    if (part !== "closing") lastRankingEndFrame = narrated;
+
     previousSeconds += spokenSeconds + gapSeconds;
     previousFrame = end;
   });
 
-  const finalStart = toFrames(previousSeconds, fps);
+  // Without a sign-off this is exactly the end of the audio, as before. With one,
+  // it must stay on the last ranking line: the readouts leave there, and the
+  // complete ranking comes back one pause later — *before* the closing words.
+  const finalStart = hasClosing
+    ? lastRankingEndFrame
+    : toFrames(previousSeconds, fps);
   // The complete ranking waits one silent beat after the last line, so the
   // closing shot is preceded by an empty map instead of a one-frame blink.
   const finalePause = toFrames(FINALE_PAUSE_SECONDS, fps);
@@ -268,17 +313,24 @@ const buildFromAudioSegments = (
     segments,
     finalStart,
     finaleAt: finalStart + finalePause,
-    // Round up so the rendered video is never shorter than the audio track. The
-    // pause is *added* to the hold: the empty beat must not eat reading time.
-    totalFrames: Math.max(
-      previousFrame + finalePause,
-      Math.ceil(
-        (previousSeconds +
-          FINALE_PAUSE_SECONDS +
-          (project.finalHoldDuration ?? 0)) *
-          fps,
-      ),
-    ),
+    // Without a sign-off: round up so the rendered video is never shorter than
+    // the audio track. The pause is *added* to the hold, so the empty beat never
+    // eats reading time.
+    //
+    // With one: the finale pause and the whole-ranking hold are already inside
+    // the audio (they are the silence before the closing line), so the video is
+    // simply the audio plus the short tail after the last spoken word.
+    totalFrames: hasClosing
+      ? previousFrame + toFrames(CLOSING_HOLD_SECONDS, fps)
+      : Math.max(
+          previousFrame + finalePause,
+          Math.ceil(
+            (previousSeconds +
+              FINALE_PAUSE_SECONDS +
+              (project.finalHoldDuration ?? 0)) *
+              fps,
+          ),
+        ),
   };
 };
 

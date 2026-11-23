@@ -17,7 +17,9 @@ export type RankingDatum = {
 
 /**
  * One spoken block of the synthesized narration, in seconds.
- * `opening` is the welcome line; `ranking` maps back to a RankingDatum by rank.
+ * `opening` is the welcome line; `ranking` maps back to a RankingDatum by rank;
+ * `closing` is the optional sign-off, spoken only after the complete ranking has
+ * been presented.
  * `gapAfter` is the silence inserted after the block.
  *
  * A ranking line is deliberately two blocks — `part: 'rank'` is the rank
@@ -26,10 +28,15 @@ export type RankingDatum = {
  * neither block and no `part`, which means one whole line per province.
  */
 export type AudioSegment = {
-  type: 'opening' | 'ranking';
+  type: 'opening' | 'ranking' | 'closing';
   rank?: number;
   part?: 'rank' | 'name';
   duration: number;
+  /**
+   * Silence after the block. On the block right before a `closing` segment this
+   * carries the finale pause **plus** the whole-ranking hold, which is what puts
+   * the sign-off after the complete ranking instead of on top of the last line.
+   */
   gapAfter?: number;
 };
 

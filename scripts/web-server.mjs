@@ -600,12 +600,16 @@ const insertAudioGaps = async ({
   input,
   output,
   duration,
-  gap,
+  gaps,
   items,
   run,
   remotionCli,
 }) => {
-  if (!gap || gap <= 0 || items.length < 2) return input;
+  // `gaps[i]` is the silence that follows item i — normally the inter-line gap,
+  // but the item before the closing line carries the finale pause plus the
+  // whole-ranking hold. A video with no silence at all stays untouched.
+  const silenced = Array.isArray(gaps) && gaps.some((value) => value > 0);
+  if (!silenced || items.length < 2) return input;
 
   const totalCharacters =
     items.reduce((sum, item) => sum + item.text.length, 0) || 1;
@@ -629,10 +633,11 @@ const insertAudioGaps = async ({
 
     cursor += segmentDuration;
 
-    if (index < spokenDurations.length - 1) {
+    const silence = Number(gaps[index]) || 0;
+    if (index < spokenDurations.length - 1 && silence > 0) {
       const silenceLabel = `s${index}`;
 
-      filters.push(`anullsrc=r=24000:cl=mono:d=${gap}[${silenceLabel}]`);
+      filters.push(`anullsrc=r=24000:cl=mono:d=${silence}[${silenceLabel}]`);
       concatInputs.push(`[${silenceLabel}]`);
     }
   });
@@ -1011,6 +1016,9 @@ const server = http.createServer(async (req, res) => {
       const gap = Math.max(0, Number(body.gap) || 0);
       const { width, height } = parseResolution(body.resolution);
       const opening = String(body.opening || "").trim();
+      // 结束语：可留空。留空时整条链路（items / 静音 / 时间轴 / 时长）与
+      // 没有这个功能之前完全一致，成片逐帧不变。
+      const closing = String(body.closing || "").trim();
       const ranked = body.rankings.slice().sort((a, b) => b.rank - a.rank);
       // The script is the ground truth for the timeline: it is literally what the
       // engine speaks. Reading its real lines (rather than re-deriving them from
@@ -1021,7 +1029,7 @@ const server = http.createServer(async (req, res) => {
       const scriptLines = narrationModule
         ? narrationModule.alignScriptLines(
             body.script,
-            (opening ? 1 : 0) + ranked.length,
+            (opening ? 1 : 0) + ranked.length + (closing ? 1 : 0),
           )
         : null;
       const lineAt = (index) => (scriptLines ? scriptLines[index] : undefined);
@@ -1056,43 +1064,21 @@ const server = http.createServer(async (req, res) => {
             text: narration?.text ?? parts.map((part) => part.text).join(""),
           };
         }),
+        // 结束语排在最后一段，但它和最后一句排名之间不是普通停顿：那段静音是
+        // 「空一拍 + 片尾全部展示」，等完整榜单真的亮出来之后，结束语才开口。
+        ...(closing
+          ? [
+              {
+                type: "closing",
+                text: lineAt(lineOffset + ranked.length) || closing,
+              },
+            ]
+          : []),
       ];
       const totalCharacters =
         items.reduce((sum, item) => sum + item.text.length, 0) || 1;
       const duration = sourceDuration;
       const spokenDuration = Math.max(0, sourceDuration);
-      // Each item keeps its share of the synthesized audio; inside an item the
-      // parts split that share by their own text length. The silence only lands
-      // on the last part, so it still separates provinces and never interrupts
-      // a line (the audio itself is only sliced per item — see insertAudioGaps).
-      let cursor = 0;
-      const segments = [];
-      items.forEach((item, index) => {
-        const spoken = (spokenDuration * item.text.length) / totalCharacters;
-        const { parts, ...head } = item;
-        const pieces = parts ?? [{ text: item.text }];
-        const piecesCharacters =
-          pieces.reduce((sum, piece) => sum + piece.text.length, 0) || 1;
-        let pieceCursor = cursor;
-
-        pieces.forEach((piece, pieceIndex) => {
-          const pieceDuration = (spoken * piece.text.length) / piecesCharacters;
-          segments.push({
-            ...head,
-            ...(piece.part ? { part: piece.part } : {}),
-            text: piece.text,
-            start: +pieceCursor.toFixed(3),
-            duration: +pieceDuration.toFixed(3),
-            gapAfter:
-              pieceIndex === pieces.length - 1 && index < items.length - 1
-                ? gap
-                : 0,
-          });
-          pieceCursor += pieceDuration;
-        });
-
-        cursor += spoken + (index < items.length - 1 ? gap : 0);
-      });
       // The readouts now show one at a time and only the closing beat presents
       // the complete ranking, so that final shot needs real reading time: it
       // used to get the inter-line gap (~1.5s) because earlier the numbers had
@@ -1109,14 +1095,59 @@ const server = http.createServer(async (req, res) => {
       // the pause never shortens the hold. Same constant the timeline uses, so
       // the muxed audio and the composition report the same length.
       const finalePauseSeconds = timelineModule?.FINALE_PAUSE_SECONDS ?? 0.6;
-      const totalDuration = +(
-        sourceDuration +
-        gap * Math.max(0, items.length - 1)
-      ).toFixed(3);
+      // 每段后面的静音长度。普通排名行之间是 `gap`；最后一句排名之后（也就是
+      // 结束语之前）换成「空一拍 + 片尾全部展示」，让完整榜单先亮够，再念
+      // 结束语。这段值同时进 segments、插静音的 ffmpeg 和 `audioSegments`，
+      // 所以画面、音频、时间轴三处永远一致。没有结束语时全部退回 `gap`，
+      // 与旧版逐帧相同。
+      const closingGapSeconds = closing
+        ? (timelineModule?.closingDelaySeconds?.(finalHoldSeconds) ??
+          finalePauseSeconds + finalHoldSeconds)
+        : 0;
+      const gapAfterSeconds = items.map((item, index) => {
+        if (index === items.length - 1) return 0;
+        return items[index + 1].type === "closing" ? closingGapSeconds : gap;
+      });
+      // Each item keeps its share of the synthesized audio; inside an item the
+      // parts split that share by their own text length. The silence only lands
+      // on the last part, so it still separates provinces and never interrupts
+      // a line (the audio itself is only sliced per item — see insertAudioGaps).
+      let cursor = 0;
+      const segments = [];
+      items.forEach((item, index) => {
+        const spoken = (spokenDuration * item.text.length) / totalCharacters;
+        const { parts, ...head } = item;
+        const pieces = parts ?? [{ text: item.text }];
+        const piecesCharacters =
+          pieces.reduce((sum, piece) => sum + piece.text.length, 0) || 1;
+        const gapAfter = gapAfterSeconds[index] ?? 0;
+        let pieceCursor = cursor;
+
+        pieces.forEach((piece, pieceIndex) => {
+          const pieceDuration = (spoken * piece.text.length) / piecesCharacters;
+          segments.push({
+            ...head,
+            ...(piece.part ? { part: piece.part } : {}),
+            text: piece.text,
+            start: +pieceCursor.toFixed(3),
+            duration: +pieceDuration.toFixed(3),
+            gapAfter: pieceIndex === pieces.length - 1 ? gapAfter : 0,
+          });
+          pieceCursor += pieceDuration;
+        });
+
+        cursor += spoken + gapAfter;
+      });
+      // 旁白音轨的真实长度（含句间静音、也含结束语前那段片尾静默）。
+      const totalDuration = +cursor.toFixed(3);
+      // 结束语念完后再留一点余韵，避免最后一句被切掉。没有结束语时仍是
+      // 「空一拍 + 片尾停留」，与旧版一致。
+      const closingHoldSeconds = closing
+        ? (timelineModule?.CLOSING_HOLD_SECONDS ?? 1.5)
+        : 0;
       const videoDuration = +(
         totalDuration +
-        finalePauseSeconds +
-        finalHoldSeconds
+        (closing ? closingHoldSeconds : finalePauseSeconds + finalHoldSeconds)
       ).toFixed(3);
 
       // The map lights a province when its *name* is voiced — the rank piece has
@@ -1200,8 +1231,22 @@ const server = http.createServer(async (req, res) => {
         targetSpeechDuration: ttsRequest.targetSeconds,
         ttsModel: ttsRequest.model,
         gap,
-        // Seconds of narrated audio; the rendered video is `finalHoldSeconds`
-        // longer so the last province stays on screen after its reveal.
+        // 结束语（留空时不写这一块）：原文 + 它在成片里开口的时刻，方便回查
+        // 「这句话落在第几秒」。
+        ...(closing
+          ? {
+              closing: {
+                text: closing,
+                start:
+                  segments.find((segment) => segment.type === "closing")
+                    ?.start ?? null,
+                holdSeconds: closingHoldSeconds,
+              },
+            }
+          : {}),
+        // Seconds of narrated audio (gaps and the pre-closing silence included);
+        // the rendered video is a little longer so the closing shot — or the
+        // sign-off — is never cut mid-word.
         audioDuration: totalDuration,
         finalHoldSeconds,
         totalDuration: videoDuration,
@@ -1241,7 +1286,7 @@ const server = http.createServer(async (req, res) => {
         input: wavPath,
         output: gappedWavPath,
         duration,
-        gap,
+        gaps: gapAfterSeconds,
         items,
         run,
         remotionCli,

@@ -223,6 +223,12 @@
       font-size: 11px;
     }
 
+    /* 「（可留空）」这类标签尾注：弱化成说明，不和字段名抢注意力。 */
+    .field label .label-note {
+      color: #64798a;
+      font-weight: 400;
+    }
+
     .field-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1176,6 +1182,20 @@
           <textarea id="opening" rows="2">ยินดีต้อนรับสู่การจัดอันดับข้อมูลระดับจังหวัดของประเทศไทย</textarea>
         </div>
 
+        <!-- 结束语可为空：留空时不加这一段，成片与原来完全一致；填写后会在
+             片尾完整榜单展示完之后才念出来（只配音，不上屏）。 -->
+        <div class="field">
+          <label for="closing">结束语 <span class="label-note">（可留空）</span></label>
+          <textarea
+            id="closing"
+            rows="2"
+            placeholder="留空则片尾不加结束语，成片与原来完全一致"
+          ></textarea>
+          <div class="hint">
+            填写后：最后一句排名念完 → 空一拍 → 全部府一起展示 → 念结束语。
+          </div>
+        </div>
+
         <div class="field">
           <label for="ttsEngine">TTS 引擎</label>
           <select id="ttsEngine" style="margin-bottom: 6px">
@@ -1436,7 +1456,7 @@
       <textarea id="script" rows="4"></textarea>
 
       <button id="refreshScript" type="button">
-        根据开场白和排名重新生成文案
+        根据开场白、排名和结束语重新生成文案
       </button>
     </section>
 
@@ -2221,6 +2241,11 @@
         $("#fitMode").value === "manual" ? "grid" : "none";
     };
 
+    /**
+     * 完整音频文案 = 开场白 + 名次行 + 结束语，空段落自动丢掉。行数必须和
+     * 服务端的期望一致（`(开场白?1:0) + 府数 + (结束语?1:0)`），否则服务端
+     * 会判定文案对不上、回退到模板行 —— 结束语留空时这里就少一段。
+     */
     const buildScript = () =>
       [
         $("#opening").value.trim(),
@@ -2228,6 +2253,7 @@
           .slice()
           .sort((a, b) => Number(a.rank) - Number(b.rank))
           .map(narration),
+        $("#closing").value.trim(),
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -3007,6 +3033,7 @@
     });
 
     $("#opening").addEventListener("input", refreshScript);
+    $("#closing").addEventListener("input", refreshScript);
     $("#refreshScript").addEventListener("click", refreshScript);
 
     $("#add").addEventListener("click", () => {
@@ -3103,6 +3130,8 @@
           title: $("#title").value.trim(),
           outputName: safeName($("#outputName").value),
           opening: $("#opening").value.trim(),
+          // 空字符串 = 不加结束语，服务端走「无结束语」的旧路径。
+          closing: $("#closing").value.trim(),
           script: $("#script").value.trim(),
           ttsEngine: $("#ttsEngine").value,
           modelId: $("#ttsModel").value,
