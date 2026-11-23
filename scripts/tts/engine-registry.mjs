@@ -6,7 +6,7 @@ import { buildEngineDescriptors } from "./capabilities.mjs";
 
 const timeoutMs = Math.max(
   5_000,
-  Number(process.env.TTS_TIMEOUT_MS) || 120_000,
+  Number(process.env.TTS_TIMEOUT_MS) || 600_000,
 );
 const healthTimeoutMs = Math.max(
   500,

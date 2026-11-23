@@ -24,7 +24,7 @@ export const loadTtsConfig = (root) => {
   config.defaultEngine ??= 'edge';
   config.timeoutMs = Math.max(
     5000,
-    Number(process.env.TTS_TIMEOUT_MS || config.timeoutMs) || 120000,
+    Number(process.env.TTS_TIMEOUT_MS || config.timeoutMs) || 600000,
   );
   config.healthTimeoutMs = Math.max(
     500,

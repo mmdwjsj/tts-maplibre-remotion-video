@@ -1,6 +1,6 @@
 {
   "defaultEngine": "edge",
-  "timeoutMs": 120000,
+  "timeoutMs": 600000,
   "healthTimeoutMs": 1500,
   "engines": {
     "edge": {
