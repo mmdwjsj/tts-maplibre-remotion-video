@@ -260,6 +260,13 @@ const createHttpEngine = ({
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
+
+  // Only schema-declared parameters are forwarded to the model service, so a
+  // stray field from the UI can never leak into another engine's request body.
+  const parameterKeys = new Set(
+    (engineConfig.parameters || []).map((item) => item.key),
+  );
+
   return {
     id,
     name,
@@ -305,16 +312,27 @@ const createHttpEngine = ({
       speed = 1,
       format = "wav",
       output,
+      parameters = {},
     }) {
       if (!baseUrl)
         throw new Error(
           `${name} is not configured. Set ${envPrefix}_BASE_URL.`,
         );
+      const extraParameters = Object.fromEntries(
+        Object.entries(parameters).filter(
+          ([key, value]) =>
+            parameterKeys.has(key) &&
+            value !== undefined &&
+            value !== null &&
+            value !== "",
+        ),
+      );
       const response = await fetch(`${baseUrl}${speechPath}`, {
         method: "POST",
         headers,
         signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
+          ...extraParameters,
           model: selectedModel || model,
           input: text,
           voice: voice || engineConfig.defaultVoice || voices[0]?.id,
@@ -381,6 +399,14 @@ export const createTtsRegistry = (dependencies) => {
       envPrefix: "SAKTHAI",
       defaults: { model: "sakthai", voices: "default" },
       engineConfig: getEngineConfig("sakthai"),
+      ...dependencies,
+    }),
+    createHttpEngine({
+      id: "wayu",
+      name: "Wayu TTS",
+      envPrefix: "WAYU",
+      defaults: { model: "wayu", voices: "m_young_clear" },
+      engineConfig: getEngineConfig("wayu"),
       ...dependencies,
     }),
   ];

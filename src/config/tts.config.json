@@ -77,6 +77,46 @@
       "voices": [
         { "id": "default", "name": "Default Thai", "culture": "th-TH" }
       ]
+    },
+    "wayu": {
+      "enabled": true,
+      "baseUrl": "http://127.0.0.1:10005",
+      "speechPath": "/v1/audio/speech",
+      "apiKey": "",
+      "defaultModel": "wayu",
+      "defaultVoice": "m_young_clear",
+      "models": [{ "id": "wayu", "name": "Wayu TTS" }],
+      "languages": [{ "value": "th-TH", "label": "Thai (Thailand)" }],
+      "defaultLanguage": "th-TH",
+      "speed": {
+        "min": 0.25,
+        "max": 2,
+        "step": 0.05,
+        "defaultValue": 1
+      },
+      "voices": [
+        { "id": "f_elderly_low", "name": "Female · Elderly Low", "culture": "th-TH" },
+        { "id": "f_elderly_soft", "name": "Female · Elderly Soft", "culture": "th-TH" },
+        { "id": "f_mid_clear", "name": "Female · Mid Clear", "culture": "th-TH" },
+        { "id": "f_mid_warm", "name": "Female · Mid Warm", "culture": "th-TH" },
+        { "id": "f_teen_bright", "name": "Female · Teen Bright", "culture": "th-TH" },
+        { "id": "f_young_bright", "name": "Female · Young Bright", "culture": "th-TH" },
+        { "id": "f_young_clear", "name": "Female · Young Clear", "culture": "th-TH" },
+        { "id": "f_young_warm", "name": "Female · Young Warm", "culture": "th-TH" },
+        { "id": "m_elderly_deep", "name": "Male · Elderly Deep", "culture": "th-TH" },
+        { "id": "m_mid_warm", "name": "Male · Mid Warm", "culture": "th-TH" },
+        { "id": "m_teen_bright", "name": "Male · Teen Bright", "culture": "th-TH" },
+        { "id": "m_young_clear", "name": "Male · Young Clear", "culture": "th-TH" }
+      ],
+      "parameters": [
+        {
+          "key": "seed",
+          "label": "随机种子（留空则随机）",
+          "description": "填入整数可复现同一段语音；留空由模型随机生成。",
+          "type": "number",
+          "step": 1
+        }
+      ]
     }
   }
 }

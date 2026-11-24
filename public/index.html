@@ -3139,7 +3139,20 @@
           speaker: $("#speaker").value,
           speechDuration: 3,
           ttsSpeed: Number($("#ttsSpeed").value),
-          parameters: Object.fromEntries(Array.from(document.querySelectorAll("[data-tts-parameter]")).map((input) => [input.dataset.ttsParameter, input.type === "checkbox" ? input.checked : input.type === "number" ? Number(input.value) : input.value])),
+          // 留空的高级参数不发送：例如 seed 留空代表由模型随机生成，
+          // 若把空值转成 0 反而会固定成种子 0。
+          parameters: Object.fromEntries(
+            Array.from(document.querySelectorAll("[data-tts-parameter]"))
+              .map((input) => [
+                input.dataset.ttsParameter,
+                input.type === "checkbox"
+                  ? input.checked
+                  : input.type === "number"
+                    ? (String(input.value).trim() === "" ? undefined : Number(input.value))
+                    : input.value,
+              ])
+              .filter(([, value]) => value !== undefined && value !== "" && !Number.isNaN(value)),
+          ),
           gap: Number($("#gap").value),
           // 留空 = 由服务端按府数自动算（5 个府 4.5s，封顶 8s）。
           ...(() => {

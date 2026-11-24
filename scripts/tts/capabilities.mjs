@@ -97,6 +97,7 @@ export const buildEngineDescriptors = (config = {}) => {
     ["moss-tts", "MOSS-TTS"],
     ["kokoro", "Kokoro"],
     ["sakthai", "SakThai"],
+    ["wayu", "Wayu TTS"],
   ]) {
     descriptors.push({
       id,

@@ -99,7 +99,7 @@ JSON 示例位于 `public/data/rankings.json`。Excel 使用相同列名，可�
 
 把 Gemini TTS 生成的整段音频放入 `public/audio/`，在项目数据中设置 `audioSrc`；同时把每段实际时长写入对应记录的 `narrationDuration`。生产自动化可在此基础上增加脚本：生成泰语文案 → 调 Gemini TTS → ffprobe 获取时长 → 写入项目 JSON → Remotion render。
 
-Web 端（`npm run web`）已经内置这条链路：表单/JSON → 6 个引擎可选合成 → 插静音 → 写 `timeline.json` → Remotion render → ffmpeg 混流。环境变量可参考 `.env.tts.example` 复制为 `.env.tts` 自动加载（详见 `TTS_ENGINES.md`）。
+Web 端（`npm run web`）已经内置这条链路：表单/JSON → 7 个引擎可选合成 → 插静音 → 写 `timeline.json` → Remotion render → ffmpeg 混流。环境变量可参考 `.env.tts.example` 复制为 `.env.tts` 自动加载（详见 `TTS_ENGINES.md`）。
 
 ## 数据来源
 

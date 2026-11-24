@@ -1007,6 +1007,7 @@ const server = http.createServer(async (req, res) => {
         model: unifiedRequest.modelId,
         speed: unifiedRequest.controls.speed,
         format: unifiedRequest.output.format,
+        parameters: unifiedRequest.parameters,
         textPath,
         output: wavPath,
       });
